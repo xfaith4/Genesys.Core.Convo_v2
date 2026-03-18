@@ -320,3 +320,242 @@ Task: the engineer can generate a coherent export or report with traceable run m
 Validation: run a realistic incident workflow from start to finish and verify the application behaves as a trustworthy, fast, and maintainable frontend rather than as a custom API extractor.
 
 Documentation: keep this definition of success visible in the repo so future roadmap changes are tested against it instead of drifting into convenience-led architecture.
+
+---
+
+## Reporting Enhancement Roadmap (Sessions 13–20)
+
+> **Purpose:** These sessions build the intelligence layer on top of the Core-backed case store.
+> Each session adds new datasets pulled exclusively through `Invoke-Dataset`, new SQLite reference
+> tables or aggregate caches, new report views in the WPF UI, and new roll-up statistics designed
+> to surface insight rather than raw row counts.
+>
+> **Core constraint:** every Genesys Cloud API call is made by `App.CoreAdapter.psm1` via
+> `Invoke-Dataset`. No session may introduce a new direct REST path in the frontend.
+
+### Dataset reference
+
+The following catalog keys are available and are used across these sessions.
+All calls are made with `Invoke-Dataset -Dataset <key> -CatalogPath $catalogPath ...`.
+
+| Key | What it delivers |
+| --- | --- |
+| `analytics-conversation-details` | Full async conversation records — participants, sessions, segments, metrics |
+| `analytics-conversation-details-query` | Synchronous preview query for the same shape |
+| `analytics.query.conversation.aggregates.queue.performance` | nConnected, tHandle, tTalk, tAcw, tAnswered, nOffered by queue |
+| `analytics.query.conversation.aggregates.agent.performance` | Per-agent handle, talk, ACW, connected counts |
+| `analytics.query.conversation.aggregates.abandon.metrics` | nAbandoned, tAbandoned, nOffered by queue |
+| `analytics.query.conversation.aggregates.transfer.metrics` | nTransferred, nBlindTransferred, nConsultTransferred by queue |
+| `analytics.query.conversation.aggregates.wrapup.distribution` | nConnected by wrapUpCode and queueId |
+| `analytics.query.conversation.aggregates.digital.channels` | nOffered, nConnected, nAbandoned by mediaType |
+| `analytics.query.queue.aggregates.service.level` | nAnsweredIn20/30/60, tServiceLevel by queue |
+| `analytics.query.user.aggregates.performance.metrics` | Agent nConnected, tHandle, tTalk, tAcw, nOffered, tAnswered |
+| `analytics.query.user.aggregates.login.activity` | tOnQueueTime, tOffQueueTime, tIdleTime by userId |
+| `analytics.query.user.details.activity.report` | Full agent presence and routing activity timeline |
+| `analytics.query.flow.aggregates.execution.metrics` | nFlow, nFlowOutcome, nFlowOutcomeFailed, nFlowMilestone |
+| `analytics.post.transcripts.aggregates.query` | Transcript topic and sentiment aggregates |
+| `routing-queues` | Queue definitions — name, division, skills, members |
+| `users` | Users with presence and routing status — name, email, department, division, skills |
+| `authorization.get.all.divisions` | Division definitions — name, home org flag |
+| `routing.get.all.wrapup.codes` | Wrapup code definitions — name, id |
+| `routing.get.all.routing.skills` | Routing skill definitions — name, id |
+| `routing.get.all.languages` | Language skill definitions — name, id |
+| `flows.get.all.flows` | Architect flow definitions — name, type, division |
+| `flows.get.flow.outcomes` | Flow outcome label definitions |
+| `flows.get.flow.milestones` | Flow milestone definitions |
+| `quality.get.evaluations.query` | Evaluation scores, form names, agents, calibration status |
+| `quality.get.surveys` | Post-call survey results — CSAT, NPS, customer verbatim |
+| `speechandtextanalytics.get.topics` | Speech and text analytics topic definitions |
+
+---
+
+## Session 13: Reference Data Foundation — Names, Queues, Divisions, Skills
+
+Scope: populate a local reference-data layer so every subsequent report can resolve IDs to human-readable names without re-querying the org during pivots.
+
+Task: add `Refresh-ReferenceData` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for each reference dataset in order: `routing-queues`, `users`, `authorization.get.all.divisions`, `routing.get.all.wrapup.codes`, `routing.get.all.routing.skills`, `routing.get.all.languages`, `flows.get.all.flows`, `flows.get.flow.outcomes`, `flows.get.flow.milestones`. Each dataset writes to `data\*.jsonl` in a dedicated `ref-<timestamp>` run folder under `OutputRoot`.
+
+Task: add `Import-ReferenceDataToCase` to `App.Database.psm1`. It reads the reference run folder and upserts rows into five new tables: `ref_queues`, `ref_users`, `ref_divisions`, `ref_wrapup_codes`, `ref_skills`. Each table includes a `refreshed_at` column and a `case_id` foreign key so reference snapshots stay scoped to a case's org state at investigation time. Flow and milestone tables (`ref_flows`, `ref_flow_outcomes`, `ref_flow_milestones`) follow the same pattern.
+
+Task: add a "Refresh Reference Data" button to the case management panel. Wire it to run `Refresh-ReferenceData` in the background runspace, then call `Import-ReferenceDataToCase` on completion. Show record counts for each reference type in the status bar (e.g., "Loaded 47 queues, 312 users, 18 divisions, 94 wrapup codes").
+
+Task: add `Get-ResolvedName` as a pure SQLite helper in `App.Database.psm1` with a `-Type` parameter (`queue`, `user`, `division`, `wrapupCode`, `skill`) and an `-Id` parameter. All downstream report queries call this rather than embedding table JOINs directly in the report layer.
+
+Validation: refresh reference data for a test org and confirm that conversation index entries for queue IDs, user IDs, and division IDs can each be resolved to a name without an API call.
+
+Documentation: add a note describing the reference data model, the intended refresh cadence (per-case at open, on demand), and the fact that reference snapshots are retained as part of the case store until the case is archived.
+
+---
+
+## Session 14: Queue Performance Aggregate Report
+
+Scope: deliver the first aggregate report: a per-queue view of volume, handling efficiency, and abandon risk across the current case's time window — with names resolved from the reference layer built in Session 13.
+
+Task: add `Get-QueuePerformanceReport` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for three datasets simultaneously via parallel background runspaces (one each): `analytics.query.conversation.aggregates.queue.performance`, `analytics.query.conversation.aggregates.abandon.metrics`, and `analytics.query.queue.aggregates.service.level`. All three use the same `StartDateTime` / `EndDateTime` window as the active case. Results are written to `data\*.jsonl` in a `report-queue-perf-<timestamp>` run folder.
+
+Task: add `Import-QueuePerformanceReport` to `App.Database.psm1`. It reads the three JSONL outputs and writes a normalized `report_queue_perf` table with one row per queue per granularity interval: `queue_id`, `queue_name` (resolved via `ref_queues`), `division_id`, `division_name`, `interval_start`, `n_offered`, `n_connected`, `n_abandoned`, `abandon_rate_pct`, `t_handle_avg_sec`, `t_talk_avg_sec`, `t_acw_avg_sec`, `n_answered_in_20`, `n_answered_in_30`, `n_answered_in_60`, `service_level_pct`.
+
+Task: add a "Queue Performance" tab to the Reports section in the WPF UI (new `TabItem` in the existing reports panel). Wire a `DataGrid` bound to `report_queue_perf` with sortable columns. Color-code the `abandon_rate_pct` cell red when > 5 %, yellow when > 2 %. Color-code `service_level_pct` red when < 80 %, yellow when < 90 %.
+
+Task: add a summary bar above the grid showing org-wide totals: total offered, total abandoned, overall abandon rate, overall service level, and median handle time. These roll up across all queues in the filtered set.
+
+Task: add a "Filter by Division" dropdown that uses the `ref_divisions` table to constrain the grid without re-querying the API.
+
+Validation: generate the queue performance report for a known test window, verify that queue names appear (not IDs), and confirm that the abandon rate and service level roll-ups match manual calculations from the raw aggregate data.
+
+Documentation: add a report description to the UI tooltip and to repo notes explaining what each metric represents and which catalog dataset supplies it.
+
+---
+
+## Session 15: Agent Performance Report — Cross-Queue View
+
+Scope: expose per-agent handling efficiency, talk ratio, idle time, and queue distribution so supervisors can identify agents who are outliers without needing a separate Genesys reporting tool.
+
+Task: add `Get-AgentPerformanceReport` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for `analytics.query.conversation.aggregates.agent.performance`, `analytics.query.user.aggregates.performance.metrics`, and `analytics.query.user.aggregates.login.activity` using the case time window. Results land in a `report-agent-perf-<timestamp>` run folder.
+
+Task: add `Import-AgentPerformanceReport` to `App.Database.psm1`. It writes a `report_agent_perf` table: `user_id`, `user_name`, `user_email`, `department`, `division_id`, `division_name`, `queue_ids` (pipe-delimited resolved names), `n_connected`, `n_offered`, `t_handle_avg_sec`, `t_talk_avg_sec`, `t_acw_avg_sec`, `t_on_queue_sec`, `t_off_queue_sec`, `t_idle_sec`, `talk_ratio_pct` (tTalk / tHandle * 100), `acw_ratio_pct`, `idle_ratio_pct`.
+
+Task: add an "Agent Performance" report tab in the WPF UI. Wire a `DataGrid` with sortable columns. Highlight `talk_ratio_pct` < 50 % as a potential concern (long ACW or idle pattern). Highlight `acw_ratio_pct` > 30 % similarly.
+
+Task: add a per-agent drilldown panel: clicking an agent row opens a side panel showing the agent's queue breakdown (which queues they handled, volume per queue), top wrapup codes (from `analytics.query.conversation.aggregates.wrapup.distribution` filtered to that agent), and a list of their conversation IDs in the case store that can be clicked to open the existing drilldown view.
+
+Task: add a division filter and a queue filter to the agent grid so supervisors can scope to a team or single queue.
+
+Validation: run the agent performance report for a test window containing agents across at least two queues. Confirm names resolve, talk ratio and ACW ratio calculations are correct, and the drilldown panel correctly links to existing conversation records.
+
+Documentation: document the `talk_ratio_pct` and `idle_ratio_pct` formulas and note which underlying aggregate metrics feed each column.
+
+---
+
+## Session 16: Transfer and Escalation Chain Intelligence
+
+Scope: surface transfer behavior so routing engineers can identify where conversations are bouncing, which queues transfer most frequently, and whether blind versus consult transfer patterns differ — all without building a custom segment parser outside Core.
+
+Task: add `Get-TransferReport` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for `analytics.query.conversation.aggregates.transfer.metrics` for the case time window. It additionally issues a follow-on pass over the already-imported conversation detail records in the local case store (no new API call) to extract segment-level transfer chains: for each conversation that has a transfer segment, record source queue ID, target queue ID (or external), transfer type (`blind`, `consult`), and durationSec before the transfer.
+
+Task: add `Import-TransferReport` to `App.Database.psm1`. Write a `report_transfer_flows` table: `queue_id_from`, `queue_name_from`, `queue_id_to`, `queue_name_to`, `transfer_type`, `n_transfers`, `pct_of_total_offered`. Also write a `report_transfer_chains` table: `conversation_id`, `transfer_sequence` (ordered pipe-delimited queue names), `hop_count`, `final_queue_name`, `final_disconnect_type`.
+
+Task: add a "Transfer & Escalation" report tab. Show a flow summary grid (from → to, count, type). Add a "Top Transfer Destinations" ranking by n_transfers. Add a "Multi-Hop Conversations" sub-grid listing conversations with hop_count ≥ 2 — these are the ones most likely to represent routing failures.
+
+Task: add a "Blind vs. Consult Split" chart summary panel (two numeric tiles with percentages) so routing engineers can immediately see whether agents are using consult properly.
+
+Task: conversations in the multi-hop grid must be clickable, opening the existing drilldown view so the engineer can inspect the full segment sequence.
+
+Validation: import a test run known to contain transferred conversations. Confirm the from/to queue table shows correct counts, hop count is correct for multi-transfer conversations, and clicking a multi-hop conversation loads the drilldown correctly.
+
+Documentation: define what constitutes a "transfer hop" in the context of the Genesys segment model and document how `queue_id_to` is inferred from segment data when the aggregate dataset does not carry the destination queue directly.
+
+---
+
+## Session 17: IVR and Flow Containment Report
+
+Scope: identify which Architect flows are self-serving successfully, which are routing callers to agents unnecessarily, and where callers are disconnecting in-flow — enabling IVR optimization without requiring access to the Architect editor.
+
+Task: add `Get-FlowContainmentReport` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for `analytics.query.flow.aggregates.execution.metrics`, `flows.get.all.flows`, `flows.get.flow.outcomes`, and `flows.get.flow.milestones` using the case time window. Results land in a `report-flow-containment-<timestamp>` run folder.
+
+Task: add `Import-FlowContainmentReport` to `App.Database.psm1`. Write `report_flow_perf`: `flow_id`, `flow_name`, `flow_type`, `division_name`, `n_flow` (entries), `n_flow_outcome_success`, `n_flow_outcome_failed`, `n_flow_milestone_hit`, `containment_rate_pct` (outcomes not routed to agent / total entries * 100), `failure_rate_pct`. Write `report_flow_milestone_distribution`: `flow_id`, `milestone_id`, `milestone_name`, `n_hit`, `pct_of_entries` — shows how far callers progress through a flow before exiting.
+
+Task: add a "Flow & IVR" report tab. Show the flow performance grid (sortable by containment rate). Add a milestone distribution sub-panel for the selected flow row: a simple ranked bar chart (milestone name vs. hit count) showing the dropout funnel — where in the flow callers stop completing milestones.
+
+Task: add a "Flows Routing to Queues" correlation view: for any flow with low containment, show which queues receive its overflow traffic using the conversation detail segments already in the case store.
+
+Validation: run the flow report for a test window containing IVR traffic. Confirm containment rate calculation matches manual count, milestone distribution shows meaningful funnel shape, and the "Flows Routing to Queues" view correctly identifies receiving queues.
+
+Documentation: define containment rate precisely (self-service completions / entries, excluding transfers to agent). Note which flow types (inbound, bot, in-queue) the dataset covers and any flow types that produce no segment-level data.
+
+---
+
+## Session 18: Wrapup Code Distribution and Contact Reason Intelligence
+
+Scope: decode why customers are calling by turning wrapup code distributions into ranked contact reason reports, then cross-reference them with queue, agent, and time-of-day dimensions to find where volume concentrates and what's driving repeat contacts.
+
+Task: add `Get-WrapupDistributionReport` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for `analytics.query.conversation.aggregates.wrapup.distribution` and `routing.get.all.wrapup.codes` for the case time window. Results land in `report-wrapup-<timestamp>`.
+
+Task: add `Import-WrapupDistributionReport` to `App.Database.psm1`. Write `report_wrapup_distribution`: `queue_id`, `queue_name`, `wrapup_code_id`, `wrapup_code_name`, `n_connected`, `pct_of_queue_total`, `pct_of_org_total`. Write `report_wrapup_by_hour`: `hour_of_day` (0–23), `wrapup_code_name`, `n_connected` — enables contact reason heat maps by time of day.
+
+Task: add a "Contact Reasons" report tab. Show a ranked grid of wrapup codes org-wide (by n_connected descending). Add a "By Queue" breakdown sub-grid for the selected code showing which queues are handling that contact reason most. Add a "By Hour" heat-map panel: rows are wrapup codes (top 10), columns are hours 0–23, cells are color-scaled by n_connected.
+
+Task: compute a "concentration index" for each wrapup code: the ratio of the top queue's share to the average queue's share. A high index means the contact reason is heavily concentrated in one queue. Surface the top 5 concentrated codes with a brief label ("Concentrated in: [queue name]") as an insights panel.
+
+Task: cross-reference the wrapup distribution with the conversation detail records already in the case store: for each of the top 10 wrapup codes, show the median handle time and median segment count of conversations carrying that code, sourced from the local SQLite case store without a new API call.
+
+Validation: run the wrapup distribution report and confirm code names resolve, the concentration index calculation is correct, and the median handle time cross-reference matches hand-counted values from known fixture conversations.
+
+Documentation: define the concentration index formula and note that wrapup codes are set by agents at wrap-up — they may be absent on conversations that disconnected before wrap-up completion.
+
+---
+
+## Session 19: Quality and Voice-of-Customer Overlay
+
+Scope: link quality evaluation scores and post-call survey results to the conversation, agent, and queue dimensions already in the case store, creating a unified quality picture that connects operational data (handle time, transfer rate) with outcome data (evaluation score, CSAT).
+
+Task: add `Get-QualityOverlayReport` to `App.CoreAdapter.psm1`. It calls `Invoke-Dataset` for `quality.get.evaluations.query` and `quality.get.surveys` using the case time window. Results land in `report-quality-<timestamp>`.
+
+Task: add `Import-QualityOverlayReport` to `App.Database.psm1`. Write `report_evaluations`: `evaluation_id`, `conversation_id`, `evaluator_user_id`, `evaluator_name`, `evaluated_user_id`, `agent_name`, `queue_id`, `queue_name`, `form_name`, `score_pct`, `calibrated`, `completed_at`. Write `report_surveys`: `survey_id`, `conversation_id`, `agent_user_id`, `agent_name`, `queue_id`, `queue_name`, `nps_score`, `csat_score`, `completed_at`, `verbatim_text`.
+
+Task: add a "Quality" report tab. Show per-agent evaluation score distribution (box plot summary: min, p25, median, p75, max). Add a per-queue CSAT/NPS distribution panel. Add a "Low Score Conversations" grid: conversations with evaluation score < 70 % or NPS detractor (0–6) — these are immediately clickable to open the drilldown view.
+
+Task: add a cross-metric correlation panel: for the set of conversations in the case store that have both an evaluation score AND a handle time, compute and display the Pearson correlation coefficient between handle time and score, and between wrapup code and score. Long handle time does not always mean quality; this panel makes that visible.
+
+Task: integrate with the speech analytics datasets if `speechandtextanalytics.get.topics` returns data: show the top 5 topics associated with low-score conversations. This requires `analytics.post.transcripts.aggregates.query` filtered to the same time window, grouped by topic.
+
+Validation: import a test run that includes evaluations and surveys. Confirm score distribution is correct, low-score conversations link to drilldown correctly, and the correlation panel displays a reasonable coefficient.
+
+Documentation: note that surveys require a post-call survey program configured in the org and that evaluation scores are normalized to a 0–100 % scale regardless of the form's raw point total.
+
+---
+
+## Session 20: Temporal Trend, Comparative Analysis, and Composite Roll-Ups
+
+Scope: enable time-series analysis and before/after comparisons so investigators can answer "did this change after the incident?" and supervisors can answer "is this week better or worse than last week?" — both entirely from data already in the case store or from a targeted second pull through Core.
+
+Task: add `Get-TrendReport` to `App.CoreAdapter.psm1`. It accepts two time windows (`-WindowA` and `-WindowB`, each a `{Start, End}` pair) and calls `Invoke-Dataset` for `analytics.query.conversation.aggregates.queue.performance`, `analytics.query.conversation.aggregates.abandon.metrics`, and `analytics.query.queue.aggregates.service.level` for each window in parallel background runspaces. Results land in `report-trend-A-<timestamp>` and `report-trend-B-<timestamp>` folders.
+
+Task: add `Import-TrendReport` to `App.Database.psm1`. Write `report_trend_comparison`: one row per queue per window label (A or B) with all queue performance metrics. Add a computed `delta_*` view that calculates the absolute and percentage change for each metric between window A and window B.
+
+Task: add a "Trend" report tab. Show a side-by-side comparison grid: queue name, Window A values, Window B values, delta (color-coded green for improvement, red for regression). Add a "Biggest Regressions" panel ranking queues by worst abandon rate delta. Add a "Biggest Improvements" panel for the opposite direction.
+
+Task: add an "Hourly Volume" sub-view: pull hourly granularity from the aggregate datasets for both windows and render a dual-line chart overlay (Window A vs. Window B) for selected queues, showing volume and handle time across the day. Use WPF `Canvas` or a simple `Grid`-based bar chart rather than a charting library dependency.
+
+Task: add a composite "Incident Impact Summary" that assembles data already in the case store: total conversations in the case window, impacted queues ranked by volume, top 3 wrapup codes in the window, worst service level, and whether quality evaluation scores shifted between windows. This summary should be exportable as a single-page text report suitable for management briefing.
+
+Validation: pull two windows around a known configuration change in a test org and verify the delta calculations are correct, the regression ranking identifies the expected queues, and the Incident Impact Summary exports cleanly.
+
+Documentation: document the two-window model, explain that Window A is typically the baseline and Window B is the incident or post-change window, and describe how to configure the windows from the case date range controls.
+
+---
+
+## Cross-Session: Enrichment Join Architecture
+
+These are the standing rules that govern how cross-entity joins are performed across Sessions 13–20.
+They must be treated as acceptance criteria for every session that joins datasets.
+
+Rule: joins between conversation records and aggregate metrics must use `conversationId` or `queueId`/`userId` keys that are already present in both the conversation detail JSONL and the aggregate JSONL as produced by Core. No join may assume undocumented fields.
+
+Rule: all name resolution (`queueId` → name, `userId` → name, `divisionId` → name, `wrapupCodeId` → name) must go through the reference tables populated in Session 13. No session may embed a hard-coded name or duplicate a reference pull.
+
+Rule: when a conversation in the case store has no matching row in an aggregate dataset (e.g., short conversations that don't appear in aggregates), the conversation row must still be included in reports with `null` aggregate values rather than being silently dropped.
+
+Rule: when an aggregate dataset returns a queue or user ID that has no matching row in the reference tables, the report must display the raw ID with a "(unresolved)" suffix rather than failing or hiding the row. This handles orgs where reference data was not refreshed after a queue rename.
+
+Rule: `App.CoreAdapter.psm1` must not pass raw conversation IDs as filter parameters into aggregate dataset calls unless the catalog explicitly supports an `id[]` filter for that endpoint. Aggregate calls use time-window + dimension filters only.
+
+Rule: all multi-dataset report pulls must use the same `StartDateTime` / `EndDateTime` values derived from the active case. These are passed as UTC ISO-8601 strings. The `.ToUniversalTime()` conversion established in Session 3 applies here without exception.
+
+---
+
+## Reporting Enhancement — Definition of Success
+
+Scope: end-state behaviors specific to the reporting sessions.
+
+Task: a supervisor can open a case, pull reference data and aggregate metrics via one-click report generation, and within five minutes have a queue performance table with abandon rates, service levels, and agent handle time breakdowns — all with human-readable names instead of raw IDs.
+
+Task: a routing engineer can identify the top three queues contributing transfer hops, the IVR flows with containment rates below a threshold, and the wrapup code distribution pattern across queues — without leaving the application or re-querying Genesys Cloud interactively.
+
+Task: an incident investigator can compare two time windows side-by-side, see which queues regressed on service level and abandon rate during the incident window, and export a one-page summary with enough context for a management briefing.
+
+Task: a quality supervisor can see evaluation score distributions by agent and queue, click into any low-score conversation to review the raw detail, and correlate evaluation outcomes with speech analytics topic trends — all from a single populated case.
+
+Validation: run a complete reporting workflow from case creation through reference data refresh, report generation for all six report types, and export of an Incident Impact Summary. Verify that no direct Genesys Cloud API calls are made from the UI layer and that all data flows through `Invoke-Dataset` via `App.CoreAdapter.psm1`.
+
+Documentation: update the application's README and this roadmap to reflect the full reporting capability, naming each report type and the catalog datasets that feed it.
