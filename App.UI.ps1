@@ -1702,6 +1702,124 @@ function _ShowSettingsDialog {
         return $tb
     }
 
+    function _ResolveSettingsPath {
+        param([string]$Path)
+        if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+
+        $trimmed = $Path.Trim()
+        try {
+            if ([System.IO.Path]::IsPathRooted($trimmed)) {
+                return [System.IO.Path]::GetFullPath($trimmed)
+            }
+            return [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($script:UIAppDir, $trimmed))
+        } catch {
+            return $trimmed
+        }
+    }
+
+    function _GetCoreCompanionInfo {
+        param([string]$CoreModulePath)
+
+        $fullCorePath = _ResolveSettingsPath $CoreModulePath
+        if ([string]::IsNullOrWhiteSpace($fullCorePath)) { return $null }
+
+        $moduleDir = [System.IO.Path]::GetDirectoryName($fullCorePath)
+        if ([string]::IsNullOrWhiteSpace($moduleDir)) { return $null }
+
+        $modulesDir = [System.IO.Path]::GetDirectoryName($moduleDir)
+        if ([string]::IsNullOrWhiteSpace($modulesDir)) { return $null }
+
+        if ([System.IO.Path]::GetFileName($moduleDir) -ne 'Genesys.Core') { return $null }
+        if ([System.IO.Path]::GetFileName($modulesDir) -ne 'modules') { return $null }
+
+        $repoRoot = [System.IO.Path]::GetDirectoryName($modulesDir)
+        if ([string]::IsNullOrWhiteSpace($repoRoot)) { return $null }
+
+        $catalogPath = [System.IO.Path]::Combine($repoRoot, 'catalog', 'genesys.catalog.json')
+        $schemaPath  = [System.IO.Path]::Combine($repoRoot, 'catalog', 'schema', 'genesys.catalog.schema.json')
+
+        return [pscustomobject]@{
+            RepoRoot    = $repoRoot
+            CatalogPath = $catalogPath
+            SchemaPath  = $schemaPath
+            HasCatalog  = [System.IO.File]::Exists($catalogPath)
+            HasSchema   = [System.IO.File]::Exists($schemaPath)
+        }
+    }
+
+    function _GetRepoRootFromCatalogPath {
+        param([string]$CatalogPath)
+
+        $fullPath = _ResolveSettingsPath $CatalogPath
+        if ([string]::IsNullOrWhiteSpace($fullPath)) { return $null }
+
+        $catalogDir = [System.IO.Path]::GetDirectoryName($fullPath)
+        if ([string]::IsNullOrWhiteSpace($catalogDir)) { return $null }
+
+        if ([System.IO.Path]::GetFileName($fullPath) -ne 'genesys.catalog.json') { return $null }
+        if ([System.IO.Path]::GetFileName($catalogDir) -ne 'catalog') { return $null }
+
+        return [System.IO.Path]::GetDirectoryName($catalogDir)
+    }
+
+    function _GetRepoRootFromSchemaPath {
+        param([string]$SchemaPath)
+
+        $fullPath = _ResolveSettingsPath $SchemaPath
+        if ([string]::IsNullOrWhiteSpace($fullPath)) { return $null }
+
+        $schemaDir = [System.IO.Path]::GetDirectoryName($fullPath)
+        if ([string]::IsNullOrWhiteSpace($schemaDir)) { return $null }
+        $catalogDir = [System.IO.Path]::GetDirectoryName($schemaDir)
+        if ([string]::IsNullOrWhiteSpace($catalogDir)) { return $null }
+
+        if ([System.IO.Path]::GetFileName($fullPath) -ne 'genesys.catalog.schema.json') { return $null }
+        if ([System.IO.Path]::GetFileName($schemaDir) -ne 'schema') { return $null }
+        if ([System.IO.Path]::GetFileName($catalogDir) -ne 'catalog') { return $null }
+
+        return [System.IO.Path]::GetDirectoryName($catalogDir)
+    }
+
+    function _SyncCoreCompanionPaths {
+        param([switch]$UpdateStatus)
+
+        $coreInfo = _GetCoreCompanionInfo -CoreModulePath $tbCorePath.Text
+        if ($null -eq $coreInfo) { return $false }
+
+        $updated = $false
+
+        $catalogPath = _ResolveSettingsPath $tbCatalogPath.Text
+        $catalogRoot = _GetRepoRootFromCatalogPath -CatalogPath $catalogPath
+        $shouldSyncCatalog = $coreInfo.HasCatalog -and (
+            [string]::IsNullOrWhiteSpace($catalogPath) -or
+            -not [System.IO.File]::Exists($catalogPath) -or
+            ($null -ne $catalogRoot -and -not $catalogRoot.Equals($coreInfo.RepoRoot, [System.StringComparison]::OrdinalIgnoreCase))
+        )
+        if ($shouldSyncCatalog -and -not $catalogPath.Equals($coreInfo.CatalogPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $tbCatalogPath.Text = $coreInfo.CatalogPath
+            $updated = $true
+        }
+
+        $schemaPath = _ResolveSettingsPath $tbSchemaPath.Text
+        $schemaRoot = _GetRepoRootFromSchemaPath -SchemaPath $schemaPath
+        $shouldSyncSchema = $coreInfo.HasSchema -and (
+            [string]::IsNullOrWhiteSpace($schemaPath) -or
+            -not [System.IO.File]::Exists($schemaPath) -or
+            ($null -ne $schemaRoot -and -not $schemaRoot.Equals($coreInfo.RepoRoot, [System.StringComparison]::OrdinalIgnoreCase))
+        )
+        if ($shouldSyncSchema -and -not $schemaPath.Equals($coreInfo.SchemaPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $tbSchemaPath.Text = $coreInfo.SchemaPath
+            $updated = $true
+        }
+
+        if ($updated -and $UpdateStatus) {
+            $lblCoreStatus.Text       = 'Catalog and schema matched to the selected Core module.'
+            $lblCoreStatus.Foreground = [System.Windows.Media.Brushes]::DarkGoldenrod
+        }
+
+        return $updated
+    }
+
     # ── General ───────────────────────────────────────────────────────────────
     _SectionHead 'General'
     $tbPageSize     = _Row 'Page size'          $cfg.PageSize
@@ -1733,6 +1851,10 @@ function _ShowSettingsDialog {
     }
     $sp.Children.Add($lblCoreStatus) | Out-Null
 
+    $tbCorePath.Add_TextChanged({
+        [void](_SyncCoreCompanionPaths -UpdateStatus)
+    })
+
     # ── Authentication ────────────────────────────────────────────────────────
     _SectionHead 'Authentication'
     $tbPkceClientId = _Row 'PKCE client ID'    $cfg.PkceClientId
@@ -1754,6 +1876,11 @@ function _ShowSettingsDialog {
     # ── Save handler ──────────────────────────────────────────────────────────
     $btnSave.Add_Click({
         try {
+            $tbCorePath.Text    = _ResolveSettingsPath $tbCorePath.Text
+            $tbCatalogPath.Text = _ResolveSettingsPath $tbCatalogPath.Text
+            $tbSchemaPath.Text  = _ResolveSettingsPath $tbSchemaPath.Text
+            [void](_SyncCoreCompanionPaths -UpdateStatus)
+
             $cfg2 = Get-AppConfig
             $cfg2 | Add-Member -NotePropertyName 'PageSize'        -NotePropertyValue ([int]$tbPageSize.Text)      -Force
             $cfg2 | Add-Member -NotePropertyName 'PreviewPageSize' -NotePropertyValue ([int]$tbPrevPageSize.Text)  -Force
