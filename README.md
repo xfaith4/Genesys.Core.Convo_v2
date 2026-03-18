@@ -80,6 +80,60 @@ Environment variables override the persisted Core paths at runtime:
 - SQLite-backed case management for imports, notes, findings, bookmarks, tags, saved views, and report snapshots
 - Impact-report generation over the currently filtered conversation set
 
+## Case-Driven Pivot Workflow
+
+Most interactive analysis happens over a **local SQLite case store**, not by re-querying Genesys Cloud on every pivot. The intended operator flow is:
+
+### 1. Create a case
+
+Open the Case Manager (toolbar button). Click **New Case**, give it a name and optional notes. The active case is shown in the status bar. All subsequent imports and investigative state attach to this case.
+
+### 2. Import a Core run
+
+Select a completed `Genesys.Core` run folder from the Recent Runs list and click **Import to Case**. The importer reads the normalized JSONL output and writes rows into the case store. Import progress is shown in the status bar; details appear in the Run Console tab.
+
+### 3. Pivot without re-querying Genesys Cloud
+
+Once imported, the grid switches to **case-store mode**. All filter and page operations execute SQL queries against the local database — no Genesys Cloud calls are made. Use the filter bar to narrow results:
+
+| Control | Filter |
+| --- | --- |
+| Date/time pickers | `conversation_start` range (apply date with picker; apply custom time with Enter) |
+| Direction | inbound / outbound |
+| Media type | voice / chat / email / … |
+| Queue | substring match |
+| Disconnect type | exact match |
+| Agent | substring match on agent names |
+| Search box | conversation ID, queue name, or agent name |
+
+### 4. Save views and create findings
+
+When you have a useful filter combination, click **Save View** in the Case Manager to persist the filter snapshot. Named views are listed per case and can be revisited across sessions.
+
+Use **New Finding** to record a conclusion, severity, status, and supporting evidence_json. Findings are stored in the case and persist independently of the filter state.
+
+Bookmark individual conversations via the drilldown panel for quick reference.
+
+### 5. Generate and save reports
+
+Click **Impact Report** to generate an aggregate summary over the currently filtered set. Use **Save Snapshot** to persist the report HTML/CSV inside the case for later reference or handoff.
+
+### 6. Refresh with additional runs
+
+Import a second Core run into the same case to extend coverage. Each import is recorded with its source run folder; provenance is preserved across refreshes.
+
+### 7. Close, archive, or purge
+
+When the investigation is complete, use the Case Manager to:
+
+- **Close** — mark the case as resolved; data is retained.
+- **Archive** — move to archived state; data is retained for long-term reference.
+- **Mark Purge-Ready** → **Purge** — permanently remove all case data from the local store when retention policy requires it.
+
+The case audit trail records every state transition with a timestamp.
+
+---
+
 ## Tests
 
 Run the full repo guardrail suite from the root:

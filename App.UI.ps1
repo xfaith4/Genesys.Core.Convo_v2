@@ -879,14 +879,25 @@ function _RefreshGridFromDb {
     $agent = $script:State.FilterAgent
     $srch  = $script:State.SearchText
 
+    # Resolve date/time range – silently skip if pickers are unset or invalid
+    $startDt = ''
+    $endDt   = ''
+    try {
+        $range = _GetQueryBoundaryDateTimes
+        if ($null -ne $range.Start) { $startDt = $range.Start.ToUniversalTime().ToString('o') }
+        if ($null -ne $range.End)   { $endDt   = $range.End.ToUniversalTime().ToString('o')   }
+    } catch { }
+
     try {
         $count = Get-ConversationCount `
-            -CaseId        $caseId `
-            -Direction     $dir `
-            -MediaType     $media `
-            -SearchText    $srch `
+            -CaseId         $caseId `
+            -Direction      $dir `
+            -MediaType      $media `
+            -SearchText     $srch `
             -DisconnectType $disc `
-            -AgentName     $agent
+            -AgentName      $agent `
+            -StartDateTime  $startDt `
+            -EndDateTime    $endDt
 
         $script:State.DbConversationCount = $count
         $script:State.TotalPages = [math]::Max(1, [math]::Ceiling($count / $script:State.PageSize))
@@ -895,14 +906,16 @@ function _RefreshGridFromDb {
         }
 
         $rows = @(Get-ConversationsPage `
-            -CaseId        $caseId `
-            -PageNumber    $script:State.CurrentPage `
-            -PageSize      $script:State.PageSize `
-            -Direction     $dir `
-            -MediaType     $media `
-            -SearchText    $srch `
+            -CaseId         $caseId `
+            -PageNumber     $script:State.CurrentPage `
+            -PageSize       $script:State.PageSize `
+            -Direction      $dir `
+            -MediaType      $media `
+            -SearchText     $srch `
             -DisconnectType $disc `
-            -AgentName     $agent)
+            -AgentName      $agent `
+            -StartDateTime  $startDt `
+            -EndDateTime    $endDt)
 
         $displayRows = @($rows | ForEach-Object { Get-DbConversationDisplayRow -DbRow $_ })
         $page  = $script:State.CurrentPage
@@ -1778,6 +1791,37 @@ if ($null -ne $script:TxtFilterAgent) {
         }
     })
 }
+
+# Date/time range pickers – refresh DB grid when selection changes (no-op in index mode)
+$script:DtpStartDate.Add_SelectedDateChanged({
+    if ($script:State.DataSource -eq 'database') {
+        $script:State.CurrentPage = 1
+        _ApplyFiltersAndRefresh
+    }
+})
+
+$script:DtpEndDate.Add_SelectedDateChanged({
+    if ($script:State.DataSource -eq 'database') {
+        $script:State.CurrentPage = 1
+        _ApplyFiltersAndRefresh
+    }
+})
+
+$script:TxtStartTime.Add_KeyDown({
+    param($sender, $e)
+    if ($e.Key -eq [System.Windows.Input.Key]::Return -and $script:State.DataSource -eq 'database') {
+        $script:State.CurrentPage = 1
+        _ApplyFiltersAndRefresh
+    }
+})
+
+$script:TxtEndTime.Add_KeyDown({
+    param($sender, $e)
+    if ($e.Key -eq [System.Windows.Input.Key]::Return -and $script:State.DataSource -eq 'database') {
+        $script:State.CurrentPage = 1
+        _ApplyFiltersAndRefresh
+    }
+})
 
 $script:BtnPrevPage.Add_Click({
     if ($script:State.CurrentPage -gt 1) {

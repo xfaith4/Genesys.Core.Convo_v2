@@ -1992,7 +1992,9 @@ function Get-ConversationCount {
         [string]$DisconnectType = '',
         [string]$AgentName      = '',
         [string]$Ani            = '',
-        [string]$DivisionId     = ''
+        [string]$DivisionId     = '',
+        [string]$StartDateTime  = '',
+        [string]$EndDateTime    = ''
     )
     _RequireDb
     $where = 'case_id = @cid'
@@ -2005,6 +2007,8 @@ function Get-ConversationCount {
     if ($AgentName)      { $where += ' AND agent_names     LIKE @agent';                                  $p['@agent']  = "%$AgentName%"  }
     if ($Ani)            { $where += ' AND ani             LIKE @ani';                                    $p['@ani']    = "%$Ani%"        }
     if ($DivisionId)     { $where += ' AND division_ids    LIKE @divid';                                  $p['@divid']  = "%$DivisionId%" }
+    if ($StartDateTime)  { $where += ' AND conversation_start >= @startDt';                               $p['@startDt'] = $StartDateTime }
+    if ($EndDateTime)    { $where += ' AND conversation_start <= @endDt';                                 $p['@endDt']   = $EndDateTime   }
 
     $conn = _Open
     try {
@@ -2030,6 +2034,8 @@ function Get-ConversationsPage {
         [string]$AgentName      = '',
         [string]$Ani            = '',
         [string]$DivisionId     = '',
+        [string]$StartDateTime  = '',
+        [string]$EndDateTime    = '',
         [string]$SortBy         = 'conversation_start',
         [string]$SortDir        = 'DESC'
     )
@@ -2052,6 +2058,8 @@ function Get-ConversationsPage {
     if ($AgentName)      { $where += ' AND agent_names     LIKE @agent';                                  $p['@agent']  = "%$AgentName%"  }
     if ($Ani)            { $where += ' AND ani             LIKE @ani';                                    $p['@ani']    = "%$Ani%"        }
     if ($DivisionId)     { $where += ' AND division_ids    LIKE @divid';                                  $p['@divid']  = "%$DivisionId%" }
+    if ($StartDateTime)  { $where += ' AND conversation_start >= @startDt';                               $p['@startDt'] = $StartDateTime }
+    if ($EndDateTime)    { $where += ' AND conversation_start <= @endDt';                                 $p['@endDt']   = $EndDateTime   }
 
     $p['@limit']  = $PageSize
     $p['@offset'] = ($PageNumber - 1) * $PageSize
