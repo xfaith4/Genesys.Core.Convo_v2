@@ -44,6 +44,8 @@ $script:TxtSearch              = _Ctrl 'TxtSearch'
 $script:BtnSearch              = _Ctrl 'BtnSearch'
 $script:CmbFilterDirection     = _Ctrl 'CmbFilterDirection'
 $script:CmbFilterMedia         = _Ctrl 'CmbFilterMedia'
+$script:CmbFilterDisconnect    = _Ctrl 'CmbFilterDisconnect'
+$script:TxtFilterAgent         = _Ctrl 'TxtFilterAgent'
 $script:DgConversations        = _Ctrl 'DgConversations'
 $script:BtnPrevPage            = _Ctrl 'BtnPrevPage'
 $script:BtnNextPage            = _Ctrl 'BtnNextPage'
@@ -83,6 +85,10 @@ $script:State = @{
     SearchText          = ''
     FilterDirection     = ''
     FilterMedia         = ''
+    FilterDisconnect    = ''           # disconnect-type pivot filter (DB mode only)
+    FilterAgent         = ''           # agent user-ID filter (DB mode only)
+    DataSource          = 'index'      # 'index' (JSONL) | 'database' (SQLite case store)
+    DbConversationCount = 0            # total filtered count in DB mode
     BackgroundRunJob    = $null        # PSDataCollection / runspace handle
     BackgroundRunspace  = $null
     PollingTimer        = $null
@@ -844,10 +850,91 @@ Failed      : $($result.FailedCount)
         }
         _SetStatus "Imported $($result.RecordCount) conversations into $($result.CaseName)"
         [System.Windows.MessageBox]::Show($summary, 'Import Complete')
+        # Automatically switch the grid to DB mode to show the freshly imported data
+        _SwitchToDbMode
     } catch {
         _SetStatus 'Import failed'
         [System.Windows.MessageBox]::Show("Import failed: $_", 'Import Run')
     }
+}
+
+# ── Database-backed grid ──────────────────────────────────────────────────────
+
+function _RefreshGridFromDb {
+    <#
+    .SYNOPSIS
+        Queries the SQLite case store for the current page and filter state,
+        then pushes rows to DgConversations via Dispatcher.
+        Used when State.DataSource = 'database'.
+    #>
+    $caseId = $script:State.ActiveCaseId
+    if ([string]::IsNullOrEmpty($caseId) -or -not (Test-DatabaseInitialized)) {
+        _SetStatus 'No active case — import a run to a case to enable case-store view'
+        return
+    }
+
+    $dir   = $script:State.FilterDirection
+    $media = $script:State.FilterMedia
+    $disc  = $script:State.FilterDisconnect
+    $agent = $script:State.FilterAgent
+    $srch  = $script:State.SearchText
+
+    try {
+        $count = Get-ConversationCount `
+            -CaseId        $caseId `
+            -Direction     $dir `
+            -MediaType     $media `
+            -SearchText    $srch `
+            -DisconnectType $disc `
+            -AgentName     $agent
+
+        $script:State.DbConversationCount = $count
+        $script:State.TotalPages = [math]::Max(1, [math]::Ceiling($count / $script:State.PageSize))
+        if ($script:State.CurrentPage -gt $script:State.TotalPages) {
+            $script:State.CurrentPage = $script:State.TotalPages
+        }
+
+        $rows = @(Get-ConversationsPage `
+            -CaseId        $caseId `
+            -PageNumber    $script:State.CurrentPage `
+            -PageSize      $script:State.PageSize `
+            -Direction     $dir `
+            -MediaType     $media `
+            -SearchText    $srch `
+            -DisconnectType $disc `
+            -AgentName     $agent)
+
+        $displayRows = @($rows | ForEach-Object { Get-DbConversationDisplayRow -DbRow $_ })
+        $page  = $script:State.CurrentPage
+        $pages = $script:State.TotalPages
+
+        _Dispatch {
+            $script:DgConversations.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($displayRows)
+            $script:TxtPageInfo.Text = "Page $page of $pages  |  $count records  [case]"
+            $script:BtnPrevPage.IsEnabled = ($page -gt 1)
+            $script:BtnNextPage.IsEnabled = ($page -lt $pages)
+        }
+
+        # Mirror into CurrentIndex so impact reports keep working (index-compatible subset)
+        $script:State.CurrentIndex = @($rows)
+        _RefreshReportButtons
+    } catch {
+        _SetStatus "Case grid error: $_"
+    }
+}
+
+function _SwitchToDbMode {
+    <#
+    .SYNOPSIS
+        Switches the conversations grid to DB mode for the active case.
+        Called after a successful import or when the user selects a case that already has data.
+    #>
+    if ([string]::IsNullOrEmpty($script:State.ActiveCaseId) -or -not (Test-DatabaseInitialized)) { return }
+    $script:State.DataSource   = 'database'
+    $script:State.CurrentPage  = 1
+    $script:State.CurrentImpactReport = $null
+    _SetStatus "Case store view: $($script:State.ActiveCaseName)"
+    _RefreshGridFromDb
 }
 
 # ── Index / paging ────────────────────────────────────────────────────────────
@@ -870,6 +957,12 @@ function _LoadRunAndRefreshGrid {
 
 function _ApplyFiltersAndRefresh {
     param([object[]]$AllIndex = $null)
+
+    # DB mode: delegate entirely to the SQLite paging path
+    if ($script:State.DataSource -eq 'database') {
+        _RefreshGridFromDb
+        return
+    }
 
     if ($null -eq $AllIndex) {
         if ($null -eq $script:State.CurrentRunFolder) { return }
@@ -902,6 +995,12 @@ function _ApplyFiltersAndRefresh {
 }
 
 function _RenderCurrentPage {
+    # In DB mode the grid is always rendered via _RefreshGridFromDb (live SQL query)
+    if ($script:State.DataSource -eq 'database') {
+        _RefreshGridFromDb
+        return
+    }
+
     $idx      = $script:State.CurrentIndex
     $page     = $script:State.CurrentPage
     $pageSize = $script:State.PageSize
@@ -934,12 +1033,50 @@ function _RenderCurrentPage {
 
 function _LoadDrilldown {
     param([string]$ConversationId)
-    if ($null -eq $script:State.CurrentRunFolder) { return }
+
+    # Require either a run folder (index mode) or an active case (DB mode)
+    if ($null -eq $script:State.CurrentRunFolder -and
+        [string]::IsNullOrEmpty($script:State.ActiveCaseId)) { return }
 
     $script:State.CurrentImpactReport = $null
     _RefreshReportButtons
     _SetStatus "Loading drilldown: $ConversationId …"
-    $record = Get-ConversationRecord -RunFolder $script:State.CurrentRunFolder -ConversationId $ConversationId
+
+    $record = $null
+
+    # ── DB path: reconstruct record from participants_json stored in the case ──
+    if ($script:State.DataSource -eq 'database' -and
+        -not [string]::IsNullOrEmpty($script:State.ActiveCaseId)) {
+        try {
+            $dbRow = Get-ConversationById -CaseId $script:State.ActiveCaseId `
+                                          -ConversationId $ConversationId
+            if ($null -ne $dbRow) {
+                $ptjsonProp = $dbRow.PSObject.Properties['participants_json']
+                $ptjson     = if ($null -ne $ptjsonProp) { $ptjsonProp.Value } else { $null }
+                if (-not [string]::IsNullOrWhiteSpace($ptjson)) {
+                    $participants = $ptjson | ConvertFrom-Json
+                    $record = [pscustomobject]@{
+                        conversationId    = $ConversationId
+                        conversationStart = if ($dbRow.PSObject.Properties['conversation_start']) { $dbRow.conversation_start } else { '' }
+                        conversationEnd   = if ($dbRow.PSObject.Properties['conversation_end'])   { $dbRow.conversation_end   } else { '' }
+                        participants      = $participants
+                    }
+                    $atjsonProp = $dbRow.PSObject.Properties['attributes_json']
+                    $atjson     = if ($null -ne $atjsonProp) { $atjsonProp.Value } else { $null }
+                    if (-not [string]::IsNullOrWhiteSpace($atjson)) {
+                        $record | Add-Member -NotePropertyName 'attributes' `
+                                             -NotePropertyValue ($atjson | ConvertFrom-Json) -Force
+                    }
+                }
+            }
+        } catch { $record = $null }
+    }
+
+    # ── JSONL fallback: seek the source run folder ─────────────────────────────
+    if ($null -eq $record -and $null -ne $script:State.CurrentRunFolder) {
+        $record = Get-ConversationRecord -RunFolder $script:State.CurrentRunFolder `
+                                         -ConversationId $ConversationId
+    }
 
     if ($null -eq $record) {
         _Dispatch {
@@ -1591,8 +1728,11 @@ $script:BtnPreviewRun.Add_Click({
 $script:BtnCancelRun.Add_Click({ _CancelBackgroundRun })
 
 $script:BtnSearch.Add_Click({
-    $script:State.SearchText    = $script:TxtSearch.Text.Trim()
-    $script:State.CurrentPage   = 1
+    $script:State.SearchText  = $script:TxtSearch.Text.Trim()
+    if ($null -ne $script:TxtFilterAgent) {
+        $script:State.FilterAgent = $script:TxtFilterAgent.Text.Trim()
+    }
+    $script:State.CurrentPage = 1
     _ApplyFiltersAndRefresh
 })
 
@@ -1618,6 +1758,26 @@ $script:CmbFilterMedia.Add_SelectionChanged({
     $script:State.CurrentPage = 1
     _ApplyFiltersAndRefresh
 })
+
+if ($null -ne $script:CmbFilterDisconnect) {
+    $script:CmbFilterDisconnect.Add_SelectionChanged({
+        $sel = $script:CmbFilterDisconnect.SelectedItem
+        $script:State.FilterDisconnect = if ($sel -and $sel.Content -ne 'All disconnects') { $sel.Content } else { '' }
+        $script:State.CurrentPage = 1
+        _ApplyFiltersAndRefresh
+    })
+}
+
+if ($null -ne $script:TxtFilterAgent) {
+    $script:TxtFilterAgent.Add_KeyDown({
+        param($sender, $e)
+        if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+            $script:State.FilterAgent = $script:TxtFilterAgent.Text.Trim()
+            $script:State.CurrentPage = 1
+            _ApplyFiltersAndRefresh
+        }
+    })
+}
 
 $script:BtnPrevPage.Add_Click({
     if ($script:State.CurrentPage -gt 1) {
