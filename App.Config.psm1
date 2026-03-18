@@ -88,13 +88,19 @@ function _HasLegacySuffix {
 function _MigrateLegacyPathDefaults {
     param([pscustomobject]$Config)
 
-    if (_HasLegacySuffix -Path ([string]$Config.CoreModulePath) -Suffix $script:LegacyCoreModuleSuffix) {
+    $corePath = [string]$Config.CoreModulePath
+    if ((_HasLegacySuffix -Path $corePath -Suffix $script:LegacyCoreModuleSuffix) -and
+        -not ([System.IO.Path]::IsPathRooted($corePath) -and [System.IO.File]::Exists($corePath))) {
         $Config | Add-Member -NotePropertyName 'CoreModulePath' -NotePropertyValue $script:DefaultCoreModulePath -Force
     }
-    if (_HasLegacySuffix -Path ([string]$Config.CatalogPath) -Suffix $script:LegacyCatalogSuffix) {
+    $catalogPath = [string]$Config.CatalogPath
+    if ((_HasLegacySuffix -Path $catalogPath -Suffix $script:LegacyCatalogSuffix) -and
+        -not ([System.IO.Path]::IsPathRooted($catalogPath) -and [System.IO.File]::Exists($catalogPath))) {
         $Config | Add-Member -NotePropertyName 'CatalogPath' -NotePropertyValue $script:DefaultCatalogPath -Force
     }
-    if (_HasLegacySuffix -Path ([string]$Config.SchemaPath) -Suffix $script:LegacySchemaSuffix) {
+    $schemaPath = [string]$Config.SchemaPath
+    if ((_HasLegacySuffix -Path $schemaPath -Suffix $script:LegacySchemaSuffix) -and
+        -not ([System.IO.Path]::IsPathRooted($schemaPath) -and [System.IO.File]::Exists($schemaPath))) {
         $Config | Add-Member -NotePropertyName 'SchemaPath' -NotePropertyValue $script:DefaultSchemaPath -Force
     }
 }
