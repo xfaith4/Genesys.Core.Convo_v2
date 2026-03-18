@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
     1. Loads WPF assemblies.
     2. Imports app modules (never Genesys.Core directly – Gate D).
     3. Resolves Core paths from config + env overrides.
-    4. Calls Initialize-CoreAdapter (Gate A).
+    4. Attempts Initialize-CoreAdapter (Gate A – non-fatal; user can fix via Settings).
     5. Loads XAML\MainWindow.xaml.
     6. Dot-sources App.UI.ps1.
     7. Wires Window.Closing to persist last date/time filters.
@@ -43,7 +43,8 @@ $catalogPath = if ($env:GENESYS_CORE_CATALOG) { $env:GENESYS_CORE_CATALOG } else
 $schemaPath  = if ($env:GENESYS_CORE_SCHEMA)  { $env:GENESYS_CORE_SCHEMA  } else { $cfg.SchemaPath     }
 $outputRoot  = $cfg.OutputRoot
 
-# ── 4. Gate A: Initialize CoreAdapter ────────────────────────────────────────
+# ── 4. Gate A: Initialize CoreAdapter (non-fatal – user can fix via Settings) ─
+$script:CoreInitError = ''
 try {
     Initialize-CoreAdapter `
         -CoreModulePath $corePath `
@@ -51,11 +52,8 @@ try {
         -OutputRoot     $outputRoot `
         -SchemaPath     $schemaPath
 } catch {
-    $errMsg = "Fatal startup error (Gate A – CoreAdapter init failed):`n`n$_`n`nVerify paths:`n  Core   : $corePath`n  Catalog: $catalogPath`n`nFix configuration via Settings or set GENESYS_CORE_MODULE / GENESYS_CORE_CATALOG env vars."
-    [System.Windows.MessageBox]::Show($errMsg, 'Genesys Conversation Analysis – Startup Error',
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Error) | Out-Null
-    exit 1
+    $script:CoreInitError = [string]$_
+    Write-Warning "Gate A – CoreAdapter init failed: $script:CoreInitError"
 }
 
 # ── 4b. Gate F: Initialize Database (non-fatal – missing DLL shown in status bar) ──

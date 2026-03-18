@@ -5,9 +5,9 @@ $script:AppDir     = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $script:ConfigDir  = [System.IO.Path]::Combine($env:LOCALAPPDATA, 'GenesysConversationAnalysis')
 $script:ConfigFile = [System.IO.Path]::Combine($script:ConfigDir, 'config.json')
 
-$script:DefaultCoreModulePath = '..\Genesys.Core\modules\Genesys.Core\Genesys.Core.psd1'
-$script:DefaultCatalogPath    = '..\Genesys.Core\catalog\genesys.catalog.json'
-$script:DefaultSchemaPath     = '..\Genesys.Core\catalog\schema\genesys.catalog.schema.json'
+$script:DefaultCoreModulePath = 'G:\Development\20_Staging\GenesysCloud\Genesys.Core\modules\Genesys.Core\Genesys.Core.psd1'
+$script:DefaultCatalogPath    = 'G:\Development\20_Staging\GenesysCloud\Genesys.Core\catalog\genesys.catalog.json'
+$script:DefaultSchemaPath     = 'G:\Development\20_Staging\GenesysCloud\Genesys.Core\catalog\schema\genesys.catalog.schema.json'
 
 $script:LegacyCoreModuleSuffix = [string]([System.IO.Path]::Combine('Genesys.Core', 'modules', 'Genesys.Core', 'Genesys.Core.psd1'))
 $script:LegacyCatalogSuffix    = [string]([System.IO.Path]::Combine('Genesys.Core', 'catalog', 'genesys.catalog.json'))

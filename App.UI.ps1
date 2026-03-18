@@ -206,6 +206,22 @@ function _RefreshActiveCaseStatus {
     }
 }
 
+function _RefreshCoreState {
+    # Enables/disables Run buttons based on whether CoreAdapter is initialized.
+    # Call after Initialize-CoreAdapter succeeds (or fails) in Settings.
+    $ok = Test-CoreInitialized
+    _Dispatch {
+        if (-not $ok) {
+            $script:BtnRun.IsEnabled        = $false
+            $script:BtnPreviewRun.IsEnabled = $false
+            $script:TxtStatusRight.Text     = 'Core offline'
+        } elseif (-not $script:State.IsRunning) {
+            $script:BtnRun.IsEnabled        = $true
+            $script:BtnPreviewRun.IsEnabled = $true
+        }
+    }
+}
+
 function _ParseTimeText {
     param(
         [string]$Text,
@@ -1244,8 +1260,9 @@ function _SetRunning {
     param([bool]$IsRunning)
     $script:State.IsRunning = $IsRunning
     _Dispatch {
-        $script:BtnRun.IsEnabled        = -not $IsRunning
-        $script:BtnPreviewRun.IsEnabled = -not $IsRunning
+        $coreReady = Test-CoreInitialized
+        $script:BtnRun.IsEnabled        = $coreReady -and (-not $IsRunning)
+        $script:BtnPreviewRun.IsEnabled = $coreReady -and (-not $IsRunning)
         $script:BtnCancelRun.IsEnabled  = $IsRunning
         if (-not $IsRunning) {
             $script:PrgRun.Value = 0
@@ -1588,67 +1605,161 @@ function _ShowSettingsDialog {
     $cfg    = Get-AppConfig
     $dialog = New-Object System.Windows.Window
     $dialog.Title  = 'Settings'
-    $dialog.Width  = 560; $dialog.Height = 420
+    $dialog.Width  = 600; $dialog.Height = 580
     $dialog.Owner  = $script:Window
     $dialog.WindowStartupLocation = 'CenterOwner'
+    $dialog.ResizeMode = 'NoResize'
+
+    $scroll = New-Object System.Windows.Controls.ScrollViewer
+    $scroll.VerticalScrollBarVisibility = 'Auto'
 
     $sp = New-Object System.Windows.Controls.StackPanel
     $sp.Margin = [System.Windows.Thickness]::new(16)
+    $scroll.Content = $sp
 
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    function _SectionHead { param($text)
+        $tb = New-Object System.Windows.Controls.TextBlock
+        $tb.Text = $text
+        $tb.FontWeight = 'Bold'
+        $tb.Margin = [System.Windows.Thickness]::new(0, 12, 0, 2)
+        $sep = New-Object System.Windows.Controls.Separator
+        $sep.Margin = [System.Windows.Thickness]::new(0, 0, 0, 4)
+        $sp.Children.Add($tb)  | Out-Null
+        $sp.Children.Add($sep) | Out-Null
+    }
+
+    # Plain label + textbox row
     function _Row { param($label, $val)
         $g = New-Object System.Windows.Controls.Grid
         $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = [System.Windows.GridLength]::new(160)
         $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
         $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
-        $g.Margin = [System.Windows.Thickness]::new(0,4,0,0)
+        $g.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
         $lbl = New-Object System.Windows.Controls.TextBlock; $lbl.Text = $label; $lbl.VerticalAlignment = 'Center'
         [System.Windows.Controls.Grid]::SetColumn($lbl, 0)
-        $tb  = New-Object System.Windows.Controls.TextBox; $tb.Text = $val; $tb.Height = 26
+        $tb = New-Object System.Windows.Controls.TextBox; $tb.Text = $val; $tb.Height = 26
         [System.Windows.Controls.Grid]::SetColumn($tb, 1)
         $g.Children.Add($lbl) | Out-Null; $g.Children.Add($tb) | Out-Null
-        $sp.Children.Add($g) | Out-Null
+        $sp.Children.Add($g)  | Out-Null
         return $tb
     }
 
-    $tbPageSize      = _Row 'Page size'            $cfg.PageSize
-    $tbPrevPageSize  = _Row 'Preview page size'    $cfg.PreviewPageSize
-    $tbRegion        = _Row 'Region'               $cfg.Region
-    $tbOutputRoot    = _Row 'Output root'          $cfg.OutputRoot
-    $tbDatabasePath  = _Row 'Database path'        $cfg.DatabasePath
-    $tbSqliteDll     = _Row 'SQLite DLL path'      $cfg.SqliteDllPath
-    $tbCorePath      = _Row 'Core module path'     $cfg.CoreModulePath
-    $tbCatalogPath   = _Row 'Catalog path'         $cfg.CatalogPath
-    $tbPkceClientId  = _Row 'PKCE client ID'       $cfg.PkceClientId
-    $tbPkceRedirect  = _Row 'PKCE redirect URI'    $cfg.PkceRedirectUri
+    # Label + textbox + Browse button row (for file paths)
+    function _BrowseRow { param($label, $val, $filter)
+        $g = New-Object System.Windows.Controls.Grid
+        $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = [System.Windows.GridLength]::new(160)
+        $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+        $c3 = New-Object System.Windows.Controls.ColumnDefinition; $c3.Width = [System.Windows.GridLength]::new(70)
+        $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2); $g.ColumnDefinitions.Add($c3)
+        $g.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+        $lbl = New-Object System.Windows.Controls.TextBlock; $lbl.Text = $label; $lbl.VerticalAlignment = 'Center'
+        [System.Windows.Controls.Grid]::SetColumn($lbl, 0)
+        $tb = New-Object System.Windows.Controls.TextBox; $tb.Text = $val; $tb.Height = 26
+        [System.Windows.Controls.Grid]::SetColumn($tb, 1)
+        $btn = New-Object System.Windows.Controls.Button; $btn.Content = 'Browse…'; $btn.Height = 26; $btn.Margin = [System.Windows.Thickness]::new(4, 0, 0, 0)
+        [System.Windows.Controls.Grid]::SetColumn($btn, 2)
+        $capturedTb     = $tb
+        $capturedFilter = $filter
+        $btn.Add_Click({
+            $dlg = New-Object Microsoft.Win32.OpenFileDialog
+            $dlg.Filter = $capturedFilter
+            $dlg.Title  = "Select $label"
+            $dlg.CheckFileExists = $true
+            if ($dlg.ShowDialog()) { $capturedTb.Text = $dlg.FileName }
+        })
+        $g.Children.Add($lbl) | Out-Null; $g.Children.Add($tb) | Out-Null; $g.Children.Add($btn) | Out-Null
+        $sp.Children.Add($g)  | Out-Null
+        return $tb
+    }
 
+    # ── General ───────────────────────────────────────────────────────────────
+    _SectionHead 'General'
+    $tbPageSize     = _Row 'Page size'          $cfg.PageSize
+    $tbPrevPageSize = _Row 'Preview page size'  $cfg.PreviewPageSize
+    $tbRegion       = _Row 'Region'             $cfg.Region
+
+    # ── Storage ───────────────────────────────────────────────────────────────
+    _SectionHead 'Storage'
+    $tbOutputRoot   = _Row 'Output root'        $cfg.OutputRoot
+    $tbDatabasePath = _Row 'Database path'      $cfg.DatabasePath
+    $tbSqliteDll    = _Row 'SQLite DLL path'    $cfg.SqliteDllPath
+
+    # ── Genesys.Core ──────────────────────────────────────────────────────────
+    _SectionHead 'Genesys.Core'
+    $tbCorePath    = _BrowseRow 'Core module (.psd1)'  $cfg.CoreModulePath  'PowerShell module (*.psd1)|*.psd1|All files (*.*)|*.*'
+    $tbCatalogPath = _BrowseRow 'Catalog (.json)'      $cfg.CatalogPath     'JSON files (*.json)|*.json|All files (*.*)|*.*'
+    $tbSchemaPath  = _BrowseRow 'Schema (.json)'       $cfg.SchemaPath      'JSON files (*.json)|*.json|All files (*.*)|*.*'
+
+    # Status label – shows result of re-init attempt on Save
+    $lblCoreStatus = New-Object System.Windows.Controls.TextBlock
+    $lblCoreStatus.Margin     = [System.Windows.Thickness]::new(0, 6, 0, 0)
+    $lblCoreStatus.TextWrapping = 'Wrap'
+    if (Test-CoreInitialized) {
+        $lblCoreStatus.Text       = 'Core is initialized.'
+        $lblCoreStatus.Foreground = [System.Windows.Media.Brushes]::DarkGreen
+    } else {
+        $lblCoreStatus.Text       = 'Core is NOT initialized – set paths above and click Save.'
+        $lblCoreStatus.Foreground = [System.Windows.Media.Brushes]::Firebrick
+    }
+    $sp.Children.Add($lblCoreStatus) | Out-Null
+
+    # ── Authentication ────────────────────────────────────────────────────────
+    _SectionHead 'Authentication'
+    $tbPkceClientId = _Row 'PKCE client ID'    $cfg.PkceClientId
+    $tbPkceRedirect = _Row 'PKCE redirect URI' $cfg.PkceRedirectUri
+
+    # ── Buttons ───────────────────────────────────────────────────────────────
     $pnlBtns = New-Object System.Windows.Controls.StackPanel
     $pnlBtns.Orientation = 'Horizontal'; $pnlBtns.HorizontalAlignment = 'Right'
-    $pnlBtns.Margin = [System.Windows.Thickness]::new(0,12,0,0)
+    $pnlBtns.Margin = [System.Windows.Thickness]::new(0, 14, 0, 0)
 
-    $btnSave   = New-Object System.Windows.Controls.Button; $btnSave.Content = 'Save';   $btnSave.Width = 80; $btnSave.Height = 30; $btnSave.Margin = [System.Windows.Thickness]::new(0,0,8,0)
+    $btnSave    = New-Object System.Windows.Controls.Button; $btnSave.Content = 'Save';   $btnSave.Width = 80; $btnSave.Height = 30; $btnSave.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
     $btnCancelS = New-Object System.Windows.Controls.Button; $btnCancelS.Content = 'Cancel'; $btnCancelS.Width = 70; $btnCancelS.Height = 30
-    $pnlBtns.Children.Add($btnSave) | Out-Null; $pnlBtns.Children.Add($btnCancelS) | Out-Null
+    $pnlBtns.Children.Add($btnSave)    | Out-Null
+    $pnlBtns.Children.Add($btnCancelS) | Out-Null
     $sp.Children.Add($pnlBtns) | Out-Null
 
-    $dialog.Content = $sp
+    $dialog.Content = $scroll
 
+    # ── Save handler ──────────────────────────────────────────────────────────
     $btnSave.Add_Click({
         try {
             $cfg2 = Get-AppConfig
-            $cfg2 | Add-Member -NotePropertyName 'PageSize'          -NotePropertyValue ([int]$tbPageSize.Text)     -Force
-            $cfg2 | Add-Member -NotePropertyName 'PreviewPageSize'   -NotePropertyValue ([int]$tbPrevPageSize.Text)  -Force
-            $cfg2 | Add-Member -NotePropertyName 'Region'            -NotePropertyValue $tbRegion.Text.Trim()        -Force
-            $cfg2 | Add-Member -NotePropertyName 'OutputRoot'        -NotePropertyValue $tbOutputRoot.Text.Trim()    -Force
-            $cfg2 | Add-Member -NotePropertyName 'DatabasePath'      -NotePropertyValue $tbDatabasePath.Text.Trim()  -Force
-            $cfg2 | Add-Member -NotePropertyName 'SqliteDllPath'     -NotePropertyValue $tbSqliteDll.Text.Trim()     -Force
-            $cfg2 | Add-Member -NotePropertyName 'CoreModulePath'    -NotePropertyValue $tbCorePath.Text.Trim()      -Force
-            $cfg2 | Add-Member -NotePropertyName 'CatalogPath'       -NotePropertyValue $tbCatalogPath.Text.Trim()   -Force
-            $cfg2 | Add-Member -NotePropertyName 'PkceClientId'      -NotePropertyValue $tbPkceClientId.Text.Trim()  -Force
-            $cfg2 | Add-Member -NotePropertyName 'PkceRedirectUri'   -NotePropertyValue $tbPkceRedirect.Text.Trim()  -Force
+            $cfg2 | Add-Member -NotePropertyName 'PageSize'        -NotePropertyValue ([int]$tbPageSize.Text)      -Force
+            $cfg2 | Add-Member -NotePropertyName 'PreviewPageSize' -NotePropertyValue ([int]$tbPrevPageSize.Text)  -Force
+            $cfg2 | Add-Member -NotePropertyName 'Region'          -NotePropertyValue $tbRegion.Text.Trim()        -Force
+            $cfg2 | Add-Member -NotePropertyName 'OutputRoot'      -NotePropertyValue $tbOutputRoot.Text.Trim()    -Force
+            $cfg2 | Add-Member -NotePropertyName 'DatabasePath'    -NotePropertyValue $tbDatabasePath.Text.Trim()  -Force
+            $cfg2 | Add-Member -NotePropertyName 'SqliteDllPath'   -NotePropertyValue $tbSqliteDll.Text.Trim()     -Force
+            $cfg2 | Add-Member -NotePropertyName 'CoreModulePath'  -NotePropertyValue $tbCorePath.Text.Trim()      -Force
+            $cfg2 | Add-Member -NotePropertyName 'CatalogPath'     -NotePropertyValue $tbCatalogPath.Text.Trim()   -Force
+            $cfg2 | Add-Member -NotePropertyName 'SchemaPath'      -NotePropertyValue $tbSchemaPath.Text.Trim()    -Force
+            $cfg2 | Add-Member -NotePropertyName 'PkceClientId'    -NotePropertyValue $tbPkceClientId.Text.Trim()  -Force
+            $cfg2 | Add-Member -NotePropertyName 'PkceRedirectUri' -NotePropertyValue $tbPkceRedirect.Text.Trim()  -Force
             Save-AppConfig -Config $cfg2
             $script:State.PageSize = [int]$tbPageSize.Text
-            $dialog.Close()
-            _SetStatus 'Settings saved'
+
+            # Re-initialize Genesys.Core with the saved paths
+            try {
+                Initialize-CoreAdapter `
+                    -CoreModulePath $tbCorePath.Text.Trim() `
+                    -CatalogPath    $tbCatalogPath.Text.Trim() `
+                    -OutputRoot     $cfg2.OutputRoot `
+                    -SchemaPath     $tbSchemaPath.Text.Trim()
+                $script:CoreInitError = ''
+                $lblCoreStatus.Text       = 'Core initialized successfully.'
+                $lblCoreStatus.Foreground = [System.Windows.Media.Brushes]::DarkGreen
+                $dialog.Close()
+                _RefreshCoreState
+                _SetStatus 'Settings saved – Genesys.Core initialized'
+            } catch {
+                $script:CoreInitError     = [string]$_
+                $lblCoreStatus.Text       = "Core init failed: $_"
+                $lblCoreStatus.Foreground = [System.Windows.Media.Brushes]::Firebrick
+                # Leave dialog open so the user can correct the paths
+            }
         } catch {
             [System.Windows.MessageBox]::Show("Save failed: $_", 'Error')
         }
@@ -1947,8 +2058,12 @@ _RefreshRecentRuns
 _RefreshActiveCaseStatus
 _UpdateConnectionStatus
 _RefreshReportButtons
+_RefreshCoreState
 
-if ($script:DatabaseWarning) {
+if ($script:CoreInitError) {
+    _SetStatus 'Genesys.Core not initialized – open Settings to configure paths'
+    $script:TxtStatusRight.Text = 'Core offline'
+} elseif ($script:DatabaseWarning) {
     _SetStatus "WARNING: $script:DatabaseWarning"
     $script:TxtStatusRight.Text = 'Case store offline'
 } else {
