@@ -1,0 +1,1690 @@
+#Requires -Version 5.1
+Set-StrictMode -Version Latest
+
+# ── App.UI.ps1 ────────────────────────────────────────────────────────────────
+# Dot-sourced by App.ps1 after XAML is loaded.
+# All WPF control references are resolved here from $script:Window.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Control map ──────────────────────────────────────────────────────────────
+
+function _Ctrl { param([string]$Name) $script:Window.FindName($Name) }
+
+# Header
+$script:ElpConnStatus          = _Ctrl 'ElpConnStatus'
+$script:LblConnectionStatus    = _Ctrl 'LblConnectionStatus'
+$script:BtnConnect             = _Ctrl 'BtnConnect'
+$script:BtnSettings            = _Ctrl 'BtnSettings'
+
+# Left panel
+$script:DtpStartDate           = _Ctrl 'DtpStartDate'
+$script:TxtStartTime           = _Ctrl 'TxtStartTime'
+$script:DtpEndDate             = _Ctrl 'DtpEndDate'
+$script:TxtEndTime             = _Ctrl 'TxtEndTime'
+$script:CmbDirection           = _Ctrl 'CmbDirection'
+$script:CmbMediaType           = _Ctrl 'CmbMediaType'
+$script:TxtQueue               = _Ctrl 'TxtQueue'
+$script:TxtPreviewPageSize     = _Ctrl 'TxtPreviewPageSize'
+$script:BtnPreviewRun          = _Ctrl 'BtnPreviewRun'
+$script:BtnRun                 = _Ctrl 'BtnRun'
+$script:BtnCancelRun           = _Ctrl 'BtnCancelRun'
+$script:TxtRunStatus           = _Ctrl 'TxtRunStatus'
+$script:PrgRun                 = _Ctrl 'PrgRun'
+$script:TxtRunProgress         = _Ctrl 'TxtRunProgress'
+$script:LstRecentRuns          = _Ctrl 'LstRecentRuns'
+$script:BtnOpenRun             = _Ctrl 'BtnOpenRun'
+$script:LblActiveCase          = _Ctrl 'LblActiveCase'
+$script:BtnManageCase          = _Ctrl 'BtnManageCase'
+$script:BtnImportRun           = _Ctrl 'BtnImportRun'
+$script:BtnGenerateReport      = _Ctrl 'BtnGenerateReport'
+$script:BtnSaveReportSnapshot  = _Ctrl 'BtnSaveReportSnapshot'
+
+# Conversations tab
+$script:TxtSearch              = _Ctrl 'TxtSearch'
+$script:BtnSearch              = _Ctrl 'BtnSearch'
+$script:CmbFilterDirection     = _Ctrl 'CmbFilterDirection'
+$script:CmbFilterMedia         = _Ctrl 'CmbFilterMedia'
+$script:DgConversations        = _Ctrl 'DgConversations'
+$script:BtnPrevPage            = _Ctrl 'BtnPrevPage'
+$script:BtnNextPage            = _Ctrl 'BtnNextPage'
+$script:TxtPageInfo            = _Ctrl 'TxtPageInfo'
+$script:BtnExportPageCsv       = _Ctrl 'BtnExportPageCsv'
+$script:BtnExportRunCsv        = _Ctrl 'BtnExportRunCsv'
+
+# Drilldown tab
+$script:LblSelectedConversation = _Ctrl 'LblSelectedConversation'
+$script:TxtDrillSummary        = _Ctrl 'TxtDrillSummary'
+$script:DgParticipants         = _Ctrl 'DgParticipants'
+$script:DgSegments             = _Ctrl 'DgSegments'
+$script:TxtAttributeSearch     = _Ctrl 'TxtAttributeSearch'
+$script:DgAttributes           = _Ctrl 'DgAttributes'
+$script:TxtMosQuality          = _Ctrl 'TxtMosQuality'
+$script:TxtRawJson             = _Ctrl 'TxtRawJson'
+# BtnExpandJson exists in XAML but has no bound handler (known nuance – preserved by design)
+
+# Run Console tab
+$script:TxtConsoleStatus       = _Ctrl 'TxtConsoleStatus'
+$script:DgRunEvents            = _Ctrl 'DgRunEvents'
+$script:BtnCopyDiagnostics     = _Ctrl 'BtnCopyDiagnostics'
+$script:TxtDiagnostics         = _Ctrl 'TxtDiagnostics'
+
+# Footer
+$script:TxtStatusMain          = _Ctrl 'TxtStatusMain'
+$script:TxtStatusRight         = _Ctrl 'TxtStatusRight'
+
+# ── Application state bag ─────────────────────────────────────────────────────
+
+$script:State = @{
+    CurrentRunFolder    = $null
+    CurrentIndex        = @()          # filtered index entries for current view
+    CurrentPage         = 1
+    PageSize            = 50
+    TotalPages          = 0
+    SearchText          = ''
+    FilterDirection     = ''
+    FilterMedia         = ''
+    BackgroundRunJob    = $null        # PSDataCollection / runspace handle
+    BackgroundRunspace  = $null
+    PollingTimer        = $null
+    DiagnosticsContext  = $null        # last run folder for diagnostics
+    IsRunning           = $false
+    RunCancelled        = $false
+    PkceCancel          = $null        # CancellationTokenSource for PKCE
+    ActiveCaseId        = ''
+    ActiveCaseName      = ''
+    CurrentImpactReport = $null
+}
+
+# ── Dispatcher helper ─────────────────────────────────────────────────────────
+
+function _Dispatch {
+    param([scriptblock]$Action)
+    $script:Window.Dispatcher.Invoke([System.Action]$Action)
+}
+
+# ── Status helpers ─────────────────────────────────────────────────────────────
+
+function _SetStatus {
+    param([string]$Text, [string]$Right = '')
+    _Dispatch {
+        $script:TxtStatusMain.Text  = $Text
+        $script:TxtStatusRight.Text = $Right
+    }
+}
+
+function _UpdateConnectionStatus {
+    $info = Get-ConnectionInfo
+    _Dispatch {
+        if ($null -ne $info) {
+            $exp = $info.ExpiresAt.ToString('HH:mm:ss') + ' UTC'
+            $script:LblConnectionStatus.Text = "$($info.Region)  |  $($info.Flow)  |  expires $exp"
+            $script:ElpConnStatus.Fill       = [System.Windows.Media.Brushes]::LightGreen
+        } else {
+            $script:LblConnectionStatus.Text = 'Not connected'
+            $script:ElpConnStatus.Fill       = [System.Windows.Media.Brushes]::Salmon
+        }
+    }
+}
+
+# ── Recent runs ───────────────────────────────────────────────────────────────
+
+function _RefreshRecentRuns {
+    $cfg         = Get-AppConfig
+    $fromConfig  = @(Get-RecentRuns)
+    $fromDisk    = @(Get-RecentRunFolders -OutputRoot $cfg.OutputRoot -Max $cfg.MaxRecentRuns)
+    # Merge and deduplicate; config list takes precedence for ordering
+    $combined    = ($fromConfig + $fromDisk) | Select-Object -Unique
+    _Dispatch {
+        $script:LstRecentRuns.Items.Clear()
+        foreach ($f in $combined) {
+            $label = [System.IO.Path]::GetFileName($f)
+            $script:LstRecentRuns.Items.Add([pscustomobject]@{ Display = $label; FullPath = $f })
+        }
+        $script:LstRecentRuns.DisplayMemberPath = 'Display'
+    }
+}
+
+function _GetActiveCase {
+    if (-not (Test-DatabaseInitialized)) { return $null }
+    $cfg = Get-AppConfig
+    if (-not $cfg.ActiveCaseId) { return $null }
+    try {
+        return (Get-Case -CaseId $cfg.ActiveCaseId)
+    } catch {
+        return $null
+    }
+}
+
+function _RefreshActiveCaseStatus {
+    if (-not (Test-DatabaseInitialized)) {
+        $script:State.ActiveCaseId   = ''
+        $script:State.ActiveCaseName = ''
+        _Dispatch {
+            $script:LblActiveCase.Text = '(case store offline)'
+            $script:BtnManageCase.IsEnabled = $false
+            $script:BtnImportRun.IsEnabled  = $false
+        }
+        return
+    }
+
+    $case = _GetActiveCase
+    if ($null -eq $case) {
+        $script:State.ActiveCaseId   = ''
+        $script:State.ActiveCaseName = ''
+        _Dispatch {
+            $script:LblActiveCase.Text = '(none selected)'
+            $script:BtnManageCase.IsEnabled = $true
+            $script:BtnImportRun.IsEnabled  = $true
+        }
+        return
+    }
+
+    $script:State.ActiveCaseId   = $case.case_id
+    $script:State.ActiveCaseName = $case.name
+    _Dispatch {
+        $retention = if ($case.PSObject.Properties['retention_status']) { $case.retention_status } else { $case.state }
+        $suffix = if ($retention -and $retention -ne 'active') { " [$retention]" } else { '' }
+        $script:LblActiveCase.Text = "$($case.name)$suffix"
+        $script:BtnManageCase.IsEnabled = $true
+        $script:BtnImportRun.IsEnabled  = $true
+    }
+}
+
+function _ParseTimeText {
+    param(
+        [string]$Text,
+        [System.TimeSpan]$DefaultTime,
+        [string]$FieldName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $DefaultTime
+    }
+
+    $trimmed = $Text.Trim()
+    $match = [regex]::Match($trimmed, '^(?<hour>\d{1,2}):(?<minute>\d{2})(:(?<second>\d{2}))?$')
+    if (-not $match.Success) {
+        throw "Invalid $FieldName time '$trimmed'. Use HH:mm or HH:mm:ss."
+    }
+
+    $hour   = [int]$match.Groups['hour'].Value
+    $minute = [int]$match.Groups['minute'].Value
+    $second = if ($match.Groups['second'].Success) { [int]$match.Groups['second'].Value } else { 0 }
+    if ($hour -gt 23 -or $minute -gt 59 -or $second -gt 59) {
+        throw "Invalid $FieldName time '$trimmed'. Hours must be 00-23 and minutes/seconds 00-59."
+    }
+
+    return (New-Object -TypeName System.TimeSpan -ArgumentList $hour, $minute, $second)
+}
+
+function _GetSelectedDateTime {
+    param(
+        [Parameter(Mandatory)]$DatePicker,
+        [string]$TimeText,
+        [System.TimeSpan]$DefaultTime,
+        [string]$FieldName
+    )
+
+    if (-not $DatePicker.SelectedDate) {
+        return $null
+    }
+
+    $date = $DatePicker.SelectedDate.Value.Date
+    $time = _ParseTimeText -Text $TimeText -DefaultTime $DefaultTime -FieldName $FieldName
+    return $date.Add($time)
+}
+
+function _GetQueryBoundaryDateTimes {
+    $start = _GetSelectedDateTime -DatePicker $script:DtpStartDate -TimeText $script:TxtStartTime.Text -DefaultTime ([System.TimeSpan]::Zero) -FieldName 'start'
+    $end   = _GetSelectedDateTime -DatePicker $script:DtpEndDate   -TimeText $script:TxtEndTime.Text   -DefaultTime (New-Object -TypeName System.TimeSpan -ArgumentList 23, 59, 59) -FieldName 'end'
+
+    if ($null -ne $start -and $null -ne $end -and $start -gt $end) {
+        throw 'Start date/time must be earlier than or equal to end date/time.'
+    }
+
+    return [ordered]@{
+        Start = $start
+        End   = $end
+    }
+}
+
+function _ResolveImportRunFolder {
+    if ($script:State.CurrentRunFolder -and [System.IO.Directory]::Exists($script:State.CurrentRunFolder)) {
+        return $script:State.CurrentRunFolder
+    }
+    $sel = $script:LstRecentRuns.SelectedItem
+    if ($null -ne $sel -and $sel.FullPath -and [System.IO.Directory]::Exists($sel.FullPath)) {
+        return $sel.FullPath
+    }
+    return ''
+}
+
+function _GetCurrentViewSnapshot {
+    $range = _GetQueryBoundaryDateTimes
+    return [ordered]@{
+        captured_utc      = [datetime]::UtcNow.ToString('o')
+        run_folder        = $script:State.CurrentRunFolder
+        search_text       = $script:TxtSearch.Text.Trim()
+        grid_direction    = $script:State.FilterDirection
+        grid_media        = $script:State.FilterMedia
+        extract_direction = if ($script:CmbDirection.SelectedItem -and $script:CmbDirection.SelectedItem.Content -ne '(all)') { $script:CmbDirection.SelectedItem.Content } else { '' }
+        extract_media     = if ($script:CmbMediaType.SelectedItem -and $script:CmbMediaType.SelectedItem.Content -ne '(all)') { $script:CmbMediaType.SelectedItem.Content } else { '' }
+        queue_contains    = $script:TxtQueue.Text.Trim()
+        start_date_utc    = if ($null -ne $range.Start) { $range.Start.ToUniversalTime().ToString('o') } else { '' }
+        end_date_utc      = if ($null -ne $range.End)   { $range.End.ToUniversalTime().ToString('o')   } else { '' }
+        page_size         = $script:State.PageSize
+    }
+}
+
+function _GetCurrentImpactReportTitle {
+    $search = $script:State.SearchText
+    if (-not [string]::IsNullOrWhiteSpace($search)) {
+        return "Impact Report: $search"
+    }
+    return 'Impact Report: Current Filter'
+}
+
+function _RefreshReportButtons {
+    $canGenerate = ($null -ne $script:State.CurrentIndex -and @($script:State.CurrentIndex).Count -gt 0)
+    $canSave = $canGenerate -and ($null -ne $script:State.CurrentImpactReport) -and (Test-DatabaseInitialized)
+    _Dispatch {
+        if ($null -ne $script:BtnGenerateReport) {
+            $script:BtnGenerateReport.IsEnabled = $canGenerate
+        }
+        if ($null -ne $script:BtnSaveReportSnapshot) {
+            $script:BtnSaveReportSnapshot.IsEnabled = $canSave
+        }
+    }
+}
+
+function _GenerateImpactReport {
+    $current = @($script:State.CurrentIndex)
+    if ($current.Count -eq 0) {
+        _SetStatus 'No filtered conversations available for reporting'
+        [System.Windows.MessageBox]::Show('Load a run and apply filters before generating a report.', 'Impact Report')
+        return
+    }
+
+    try {
+        $report = New-ImpactReport -FilteredIndex $current -ReportTitle (_GetCurrentImpactReportTitle)
+        $script:State.CurrentImpactReport = $report
+        _Dispatch {
+            $script:TxtDrillSummary.Text = $report | ConvertTo-Json -Depth 8
+        }
+        _RefreshReportButtons
+        _SetStatus "Generated impact report for $($report.TotalConversations) conversations"
+    } catch {
+        _SetStatus 'Impact report generation failed'
+        [System.Windows.MessageBox]::Show("Failed to generate impact report: $_", 'Impact Report')
+    }
+}
+
+function _SaveImpactReportSnapshot {
+    if (-not (Test-DatabaseInitialized)) {
+        _SetStatus 'Case store offline'
+        return
+    }
+
+    if ($null -eq $script:State.CurrentImpactReport) {
+        _GenerateImpactReport
+        if ($null -eq $script:State.CurrentImpactReport) { return }
+    }
+
+    $case = _EnsureActiveCase
+    if ($null -eq $case) { return }
+
+    try {
+        $snapshotName = "{0} [{1}]" -f $script:State.CurrentImpactReport.ReportTitle, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        New-ReportSnapshot -CaseId $case.case_id -Name $snapshotName -Format 'json' -Content $script:State.CurrentImpactReport | Out-Null
+        _SetStatus "Saved impact report snapshot to case '$($case.name)'"
+        [System.Windows.MessageBox]::Show("Saved impact report snapshot to case '$($case.name)'.", 'Impact Report')
+    } catch {
+        _SetStatus 'Failed to save report snapshot'
+        [System.Windows.MessageBox]::Show("Failed to save impact report snapshot: $_", 'Impact Report')
+    }
+}
+
+function _ShowCaseDialog {
+    if (-not (Test-DatabaseInitialized)) {
+        [System.Windows.MessageBox]::Show('Case store is unavailable. Verify SQLite startup succeeded.', 'Case Store')
+        return $null
+    }
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title   = 'Case Store'
+    $dialog.Width   = 980
+    $dialog.Height  = 720
+    $dialog.Owner   = $script:Window
+    $dialog.WindowStartupLocation = 'CenterOwner'
+
+    $root = New-Object System.Windows.Controls.Grid
+    $root.Margin = [System.Windows.Thickness]::new(16)
+    $root.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(300) }))
+    $root.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(16) }))
+    $root.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+
+    $left = New-Object System.Windows.Controls.Grid
+    $left.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $left.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(260) }))
+    [System.Windows.Controls.Grid]::SetColumn($left, 0)
+    $root.Children.Add($left) | Out-Null
+
+    $lstCases = New-Object System.Windows.Controls.ListBox
+    $lstCases.DisplayMemberPath = 'Display'
+    $lstCases.Margin = [System.Windows.Thickness]::new(0,0,0,12)
+    [System.Windows.Controls.Grid]::SetRow($lstCases, 0)
+    $left.Children.Add($lstCases) | Out-Null
+
+    $createPanel = New-Object System.Windows.Controls.StackPanel
+    [System.Windows.Controls.Grid]::SetRow($createPanel, 1)
+    $left.Children.Add($createPanel) | Out-Null
+
+    function _AddCaseLabel {
+        param([System.Windows.Controls.Panel]$Parent, [string]$Text)
+        $lbl = New-Object System.Windows.Controls.TextBlock
+        $lbl.Text = $Text
+        $lbl.Margin = [System.Windows.Thickness]::new(0,4,0,2)
+        $Parent.Children.Add($lbl) | Out-Null
+    }
+    function _AddCaseText {
+        param([System.Windows.Controls.Panel]$Parent, [string]$Value = '', [int]$Height = 28)
+        $tb = New-Object System.Windows.Controls.TextBox
+        $tb.Height = $Height
+        $tb.Text   = $Value
+        $Parent.Children.Add($tb) | Out-Null
+        return $tb
+    }
+
+    _AddCaseLabel $createPanel 'Create a new case'
+    _AddCaseLabel $createPanel 'Name'
+    $tbName = _AddCaseText $createPanel
+    _AddCaseLabel $createPanel 'Description'
+    $tbDesc = _AddCaseText $createPanel
+    _AddCaseLabel $createPanel 'Expires UTC (optional, ISO-8601 or yyyy-MM-dd)'
+    $tbExp  = _AddCaseText $createPanel
+
+    $leftBtnPanel = New-Object System.Windows.Controls.WrapPanel
+    $leftBtnPanel.Margin = [System.Windows.Thickness]::new(0,12,0,0)
+    $leftBtnPanel.HorizontalAlignment = 'Left'
+    $createPanel.Children.Add($leftBtnPanel) | Out-Null
+
+    $btnUse    = New-Object System.Windows.Controls.Button -Property @{ Content = 'Use Selected'; Width = 110; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,8) }
+    $btnNew    = New-Object System.Windows.Controls.Button -Property @{ Content = 'Create New'; Width = 100; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,8) }
+    $btnRefresh = New-Object System.Windows.Controls.Button -Property @{ Content = 'Refresh'; Width = 80; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,8) }
+    $btnClose  = New-Object System.Windows.Controls.Button -Property @{ Content = 'Close'; Width = 80; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,8) }
+    $leftBtnPanel.Children.Add($btnUse) | Out-Null
+    $leftBtnPanel.Children.Add($btnNew) | Out-Null
+    $leftBtnPanel.Children.Add($btnRefresh) | Out-Null
+    $leftBtnPanel.Children.Add($btnClose) | Out-Null
+
+    $right = New-Object System.Windows.Controls.Grid
+    $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(48) }))
+    $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(92) }))
+    $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(180) }))
+    $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(130) }))
+    $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $right.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(44) }))
+    [System.Windows.Controls.Grid]::SetColumn($right, 2)
+    $root.Children.Add($right) | Out-Null
+
+    $txtSummary = New-Object System.Windows.Controls.TextBlock
+    $txtSummary.Text = '(no case selected)'
+    $txtSummary.FontWeight = 'SemiBold'
+    $txtSummary.TextWrapping = 'Wrap'
+    [System.Windows.Controls.Grid]::SetRow($txtSummary, 0)
+    $right.Children.Add($txtSummary) | Out-Null
+
+    $metaGrid = New-Object System.Windows.Controls.Grid
+    $metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(150) }))
+    $metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(90) }))
+    $metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(12) }))
+    $metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(90) }))
+    $metaGrid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(24) }))
+    $metaGrid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(32) }))
+    [System.Windows.Controls.Grid]::SetRow($metaGrid, 1)
+    $right.Children.Add($metaGrid) | Out-Null
+
+    $lblExpiry = New-Object System.Windows.Controls.TextBlock -Property @{ Text = 'Expiry'; VerticalAlignment = 'Center' }
+    [System.Windows.Controls.Grid]::SetColumn($lblExpiry, 0)
+    [System.Windows.Controls.Grid]::SetRow($lblExpiry, 0)
+    $metaGrid.Children.Add($lblExpiry) | Out-Null
+    $tbExpiryManage = New-Object System.Windows.Controls.TextBox -Property @{ Height = 28 }
+    [System.Windows.Controls.Grid]::SetColumn($tbExpiryManage, 1)
+    [System.Windows.Controls.Grid]::SetRow($tbExpiryManage, 1)
+    $metaGrid.Children.Add($tbExpiryManage) | Out-Null
+    $btnSaveExpiry = New-Object System.Windows.Controls.Button -Property @{ Content = 'Save'; Width = 80; Height = 28 }
+    [System.Windows.Controls.Grid]::SetColumn($btnSaveExpiry, 2)
+    [System.Windows.Controls.Grid]::SetRow($btnSaveExpiry, 1)
+    $metaGrid.Children.Add($btnSaveExpiry) | Out-Null
+
+    $lblTags = New-Object System.Windows.Controls.TextBlock -Property @{ Text = 'Tags (comma-separated)'; VerticalAlignment = 'Center' }
+    [System.Windows.Controls.Grid]::SetColumn($lblTags, 4)
+    [System.Windows.Controls.Grid]::SetRow($lblTags, 0)
+    $metaGrid.Children.Add($lblTags) | Out-Null
+    $tbTags = New-Object System.Windows.Controls.TextBox -Property @{ Height = 28 }
+    [System.Windows.Controls.Grid]::SetColumn($tbTags, 4)
+    [System.Windows.Controls.Grid]::SetRow($tbTags, 1)
+    $metaGrid.Children.Add($tbTags) | Out-Null
+    $btnSaveTags = New-Object System.Windows.Controls.Button -Property @{ Content = 'Save'; Width = 80; Height = 28 }
+    [System.Windows.Controls.Grid]::SetColumn($btnSaveTags, 5)
+    [System.Windows.Controls.Grid]::SetRow($btnSaveTags, 1)
+    $metaGrid.Children.Add($btnSaveTags) | Out-Null
+
+    $notesPanel = New-Object System.Windows.Controls.Grid
+    $notesPanel.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(24) }))
+    $notesPanel.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $notesPanel.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(34) }))
+    [System.Windows.Controls.Grid]::SetRow($notesPanel, 2)
+    $right.Children.Add($notesPanel) | Out-Null
+
+    $lblNotes = New-Object System.Windows.Controls.TextBlock -Property @{ Text = 'Case Notes'; VerticalAlignment = 'Center' }
+    [System.Windows.Controls.Grid]::SetRow($lblNotes, 0)
+    $notesPanel.Children.Add($lblNotes) | Out-Null
+    $tbNotesManage = New-Object System.Windows.Controls.TextBox
+    $tbNotesManage.AcceptsReturn = $true
+    $tbNotesManage.TextWrapping  = 'Wrap'
+    $tbNotesManage.VerticalScrollBarVisibility = 'Auto'
+    [System.Windows.Controls.Grid]::SetRow($tbNotesManage, 1)
+    $notesPanel.Children.Add($tbNotesManage) | Out-Null
+    $notesBtnPanel = New-Object System.Windows.Controls.StackPanel
+    $notesBtnPanel.Orientation = 'Horizontal'
+    $notesBtnPanel.HorizontalAlignment = 'Right'
+    [System.Windows.Controls.Grid]::SetRow($notesBtnPanel, 2)
+    $notesPanel.Children.Add($notesBtnPanel) | Out-Null
+    $btnSaveNotes = New-Object System.Windows.Controls.Button -Property @{ Content = 'Save Notes'; Width = 110; Height = 30 }
+    $notesBtnPanel.Children.Add($btnSaveNotes) | Out-Null
+
+    $viewGrid = New-Object System.Windows.Controls.Grid
+    $viewGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $viewGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(160) }))
+    $viewGrid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(24) }))
+    $viewGrid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(32) }))
+    $viewGrid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    [System.Windows.Controls.Grid]::SetRow($viewGrid, 3)
+    $right.Children.Add($viewGrid) | Out-Null
+
+    $lblViews = New-Object System.Windows.Controls.TextBlock -Property @{ Text = 'Saved Views'; VerticalAlignment = 'Center' }
+    [System.Windows.Controls.Grid]::SetRow($lblViews, 0)
+    [System.Windows.Controls.Grid]::SetColumnSpan($lblViews, 2)
+    $viewGrid.Children.Add($lblViews) | Out-Null
+    $tbViewName = New-Object System.Windows.Controls.TextBox -Property @{ Height = 28 }
+    [System.Windows.Controls.Grid]::SetRow($tbViewName, 1)
+    [System.Windows.Controls.Grid]::SetColumn($tbViewName, 0)
+    $viewGrid.Children.Add($tbViewName) | Out-Null
+    $viewBtnPanel = New-Object System.Windows.Controls.WrapPanel
+    $viewBtnPanel.HorizontalAlignment = 'Right'
+    [System.Windows.Controls.Grid]::SetRow($viewBtnPanel, 1)
+    [System.Windows.Controls.Grid]::SetColumn($viewBtnPanel, 1)
+    $viewGrid.Children.Add($viewBtnPanel) | Out-Null
+    $btnSaveView = New-Object System.Windows.Controls.Button -Property @{ Content = 'Save Current'; Width = 100; Height = 28; Margin = [System.Windows.Thickness]::new(0,0,8,0) }
+    $btnDeleteView = New-Object System.Windows.Controls.Button -Property @{ Content = 'Delete'; Width = 70; Height = 28 }
+    $viewBtnPanel.Children.Add($btnSaveView) | Out-Null
+    $viewBtnPanel.Children.Add($btnDeleteView) | Out-Null
+    $lstViews = New-Object System.Windows.Controls.ListBox
+    $lstViews.DisplayMemberPath = 'Display'
+    [System.Windows.Controls.Grid]::SetRow($lstViews, 2)
+    [System.Windows.Controls.Grid]::SetColumnSpan($lstViews, 2)
+    $viewGrid.Children.Add($lstViews) | Out-Null
+
+    $auditPanel = New-Object System.Windows.Controls.Grid
+    $auditPanel.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(24) }))
+    $auditPanel.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    [System.Windows.Controls.Grid]::SetRow($auditPanel, 4)
+    $right.Children.Add($auditPanel) | Out-Null
+    $lblAudit = New-Object System.Windows.Controls.TextBlock -Property @{ Text = 'Audit Trail'; VerticalAlignment = 'Center' }
+    [System.Windows.Controls.Grid]::SetRow($lblAudit, 0)
+    $auditPanel.Children.Add($lblAudit) | Out-Null
+    $lstAudit = New-Object System.Windows.Controls.ListBox
+    $lstAudit.DisplayMemberPath = 'Display'
+    [System.Windows.Controls.Grid]::SetRow($lstAudit, 1)
+    $auditPanel.Children.Add($lstAudit) | Out-Null
+
+    $actionPanel = New-Object System.Windows.Controls.WrapPanel
+    $actionPanel.HorizontalAlignment = 'Right'
+    [System.Windows.Controls.Grid]::SetRow($actionPanel, 5)
+    $right.Children.Add($actionPanel) | Out-Null
+    $btnCloseCase = New-Object System.Windows.Controls.Button -Property @{ Content = 'Close Case'; Width = 96; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,0) }
+    $btnPurgeReady = New-Object System.Windows.Controls.Button -Property @{ Content = 'Mark Purge-Ready'; Width = 132; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,0) }
+    $btnArchive = New-Object System.Windows.Controls.Button -Property @{ Content = 'Archive Imported Data'; Width = 150; Height = 30; Margin = [System.Windows.Thickness]::new(0,0,8,0) }
+    $btnPurge = New-Object System.Windows.Controls.Button -Property @{ Content = 'Purge Case'; Width = 96; Height = 30 }
+    $actionPanel.Children.Add($btnCloseCase) | Out-Null
+    $actionPanel.Children.Add($btnPurgeReady) | Out-Null
+    $actionPanel.Children.Add($btnArchive) | Out-Null
+    $actionPanel.Children.Add($btnPurge) | Out-Null
+
+    $dialog.Content = $root
+    $script:selectedCaseId = $null
+
+    function _RefreshCaseListLocal {
+        param([string]$PreferredCaseId = '')
+        $cases = @(Get-Cases)
+        $lstCases.Items.Clear()
+        foreach ($case in $cases) {
+            $label = "$($case.name) [$($case.retention_status)]  created $($case.created_utc)"
+            $lstCases.Items.Add([pscustomobject]@{
+                CaseId  = $case.case_id
+                Display = $label
+            }) | Out-Null
+        }
+
+        $targetId = if ($PreferredCaseId) { $PreferredCaseId } else { (Get-AppConfig).ActiveCaseId }
+        if ($targetId) {
+            foreach ($item in @($lstCases.Items)) {
+                if ($item.CaseId -eq $targetId) {
+                    $lstCases.SelectedItem = $item
+                    return
+                }
+            }
+        }
+        if ($lstCases.Items.Count -gt 0) { $lstCases.SelectedIndex = 0 }
+    }
+
+    function _RenderSelectedCaseLocal {
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) {
+            $txtSummary.Text       = '(no case selected)'
+            $tbExpiryManage.Text   = ''
+            $tbTags.Text           = ''
+            $tbNotesManage.Text    = ''
+            $lstViews.Items.Clear()
+            $lstAudit.Items.Clear()
+            return
+        }
+
+        $case = Get-Case -CaseId $sel.CaseId
+        if ($null -eq $case) { return }
+
+        $tagText = (@(Get-CaseTags -CaseId $case.case_id) -join ', ')
+        $views   = @(Get-SavedViews -CaseId $case.case_id)
+        $audit   = @(Get-CaseAudit -CaseId $case.case_id -LastN 50)
+        $counts  = @{
+            bookmarks  = @(Get-ConversationBookmarks -CaseId $case.case_id).Count
+            findings   = @(Get-Findings -CaseId $case.case_id).Count
+            snapshots  = @(Get-ReportSnapshots -CaseId $case.case_id).Count
+            imports    = @(Get-Imports -CaseId $case.case_id).Count
+        }
+
+        $txtSummary.Text = "$($case.name)  [$($case.retention_status)]`nCase Id: $($case.case_id)`nImports: $($counts.imports)  Bookmarks: $($counts.bookmarks)  Findings: $($counts.findings)  Snapshots: $($counts.snapshots)"
+        $tbExpiryManage.Text = [string]$case.expires_utc
+        $tbTags.Text         = $tagText
+        $tbNotesManage.Text  = [string]$case.notes
+
+        $lstViews.Items.Clear()
+        foreach ($view in $views) {
+            $lstViews.Items.Add([pscustomobject]@{
+                ViewId   = $view.view_id
+                Display  = "$($view.name)  [$($view.created_utc)]"
+            }) | Out-Null
+        }
+
+        $lstAudit.Items.Clear()
+        foreach ($entry in $audit) {
+            $lstAudit.Items.Add([pscustomobject]@{
+                Display = "$($entry.created_utc)  $($entry.event_type)  $($entry.detail_text)"
+            }) | Out-Null
+        }
+    }
+
+    _RefreshCaseListLocal
+
+    $lstCases.Add_SelectionChanged({
+        _RenderSelectedCaseLocal
+    })
+
+    $btnUse.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) {
+            [System.Windows.MessageBox]::Show('Select a case first.', 'Case Store')
+            return
+        }
+        $script:selectedCaseId = $sel.CaseId
+        $dialog.DialogResult = $true
+        $dialog.Close()
+    })
+
+    $btnNew.Add_Click({
+        $name = $tbName.Text.Trim()
+        if (-not $name) {
+            [System.Windows.MessageBox]::Show('Case name is required.', 'Case Store')
+            return
+        }
+
+        $expUtc = ''
+        $expTxt = $tbExp.Text.Trim()
+        if ($expTxt) {
+            try {
+                $expUtc = ([datetime]::Parse($expTxt)).ToUniversalTime().ToString('o')
+            } catch {
+                [System.Windows.MessageBox]::Show('Expiry must be a valid date.', 'Case Store')
+                return
+            }
+        }
+
+        try {
+            $script:selectedCaseId = New-Case -Name $name -Description $tbDesc.Text.Trim() -ExpiresUtc $expUtc
+            $dialog.DialogResult = $true
+            $dialog.Close()
+        } catch {
+            [System.Windows.MessageBox]::Show("Failed to create case: $_", 'Case Store')
+        }
+    })
+
+    $btnRefresh.Add_Click({
+        $current = if ($lstCases.SelectedItem) { $lstCases.SelectedItem.CaseId } else { '' }
+        _RefreshCaseListLocal -PreferredCaseId $current
+        _RenderSelectedCaseLocal
+    })
+
+    $btnSaveExpiry.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        $expUtc = ''
+        $txt = $tbExpiryManage.Text.Trim()
+        if ($txt) {
+            try {
+                $expUtc = ([datetime]::Parse($txt)).ToUniversalTime().ToString('o')
+            } catch {
+                [System.Windows.MessageBox]::Show('Expiry must be a valid date.', 'Case Store')
+                return
+            }
+        }
+        Set-CaseExpiry -CaseId $sel.CaseId -ExpiresUtc $expUtc
+        _RefreshCaseListLocal -PreferredCaseId $sel.CaseId
+        _RenderSelectedCaseLocal
+    })
+
+    $btnSaveTags.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        $tags = @($tbTags.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        Set-CaseTags -CaseId $sel.CaseId -Tags $tags
+        _RenderSelectedCaseLocal
+    })
+
+    $btnSaveNotes.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        Update-CaseNotes -CaseId $sel.CaseId -Notes $tbNotesManage.Text
+        _RenderSelectedCaseLocal
+    })
+
+    $btnSaveView.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        $name = $tbViewName.Text.Trim()
+        if (-not $name) {
+            [System.Windows.MessageBox]::Show('Enter a saved-view name first.', 'Case Store')
+            return
+        }
+        try {
+            New-SavedView -CaseId $sel.CaseId -Name $name -ViewDefinition (_GetCurrentViewSnapshot) | Out-Null
+            $tbViewName.Text = ''
+            _RenderSelectedCaseLocal
+        } catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, 'Validation')
+        }
+    })
+
+    $btnDeleteView.Add_Click({
+        $selCase = $lstCases.SelectedItem
+        $selView = $lstViews.SelectedItem
+        if ($null -eq $selCase -or $null -eq $selView) { return }
+        Remove-SavedView -CaseId $selCase.CaseId -ViewId $selView.ViewId
+        _RenderSelectedCaseLocal
+    })
+
+    $btnCloseCase.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        Close-Case -CaseId $sel.CaseId
+        _RefreshCaseListLocal -PreferredCaseId $sel.CaseId
+        _RenderSelectedCaseLocal
+        _RefreshActiveCaseStatus
+    })
+
+    $btnPurgeReady.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        Mark-CasePurgeReady -CaseId $sel.CaseId
+        _RefreshCaseListLocal -PreferredCaseId $sel.CaseId
+        _RenderSelectedCaseLocal
+        _RefreshActiveCaseStatus
+    })
+
+    $btnArchive.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        $answer = [System.Windows.MessageBox]::Show(
+            'Archive this case? Imported runs and conversations will be removed, but notes, findings, saved views, report snapshots, and audit history will remain.',
+            'Archive Case',
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        Archive-Case -CaseId $sel.CaseId
+        _RefreshCaseListLocal -PreferredCaseId $sel.CaseId
+        _RenderSelectedCaseLocal
+        _RefreshActiveCaseStatus
+    })
+
+    $btnPurge.Add_Click({
+        $sel = $lstCases.SelectedItem
+        if ($null -eq $sel) { return }
+        $answer = [System.Windows.MessageBox]::Show(
+            'Purge this case? Imported data, notes, tags, bookmarks, findings, saved views, and report snapshots will be removed. The case shell and audit history will remain.',
+            'Purge Case',
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        Purge-Case -CaseId $sel.CaseId
+        _RefreshCaseListLocal -PreferredCaseId $sel.CaseId
+        _RenderSelectedCaseLocal
+        _RefreshActiveCaseStatus
+    })
+
+    $btnClose.Add_Click({ $dialog.Close() })
+    _RenderSelectedCaseLocal
+    $dialog.ShowDialog() | Out-Null
+
+    if (-not $script:selectedCaseId) {
+        _RefreshActiveCaseStatus
+        return (_GetActiveCase)
+    }
+
+    Update-AppConfig -Key 'ActiveCaseId' -Value $script:selectedCaseId
+    _RefreshActiveCaseStatus
+    return (_GetActiveCase)
+}
+
+function _EnsureActiveCase {
+    $case = _GetActiveCase
+    if ($null -ne $case) { return $case }
+    return (_ShowCaseDialog)
+}
+
+function _ImportCurrentRunToCase {
+    if (-not (Test-DatabaseInitialized)) {
+        _SetStatus 'Case store offline'
+        return
+    }
+
+    $runFolder = _ResolveImportRunFolder
+    if (-not $runFolder) {
+        [System.Windows.MessageBox]::Show('Load a run or select one from Recent Runs first.', 'Import Run')
+        return
+    }
+
+    $case = _EnsureActiveCase
+    if ($null -eq $case) { return }
+
+    try {
+        _SetStatus "Importing run into case '$($case.name)' …"
+        $result = Import-RunFolderToCase -CaseId $case.case_id -RunFolder $runFolder
+        $summary = "Imported $($result.RecordCount) conversations into case '$($result.CaseName)'."
+        if ($result.SkippedCount -gt 0 -or $result.FailedCount -gt 0) {
+            $summary += "`nSkipped: $($result.SkippedCount)  Failed: $($result.FailedCount)"
+        }
+        _Dispatch {
+            $script:TxtDiagnostics.Text = @"
+=== Case Import ===
+Case        : $($result.CaseName)
+Run Folder  : $($result.RunFolder)
+Run Id      : $($result.RunId)
+Dataset     : $($result.DatasetKey)
+Imported    : $($result.RecordCount)
+Skipped     : $($result.SkippedCount)
+Failed      : $($result.FailedCount)
+"@
+        }
+        _SetStatus "Imported $($result.RecordCount) conversations into $($result.CaseName)"
+        [System.Windows.MessageBox]::Show($summary, 'Import Complete')
+    } catch {
+        _SetStatus 'Import failed'
+        [System.Windows.MessageBox]::Show("Import failed: $_", 'Import Run')
+    }
+}
+
+# ── Index / paging ────────────────────────────────────────────────────────────
+
+function _LoadRunAndRefreshGrid {
+    param([string]$RunFolder)
+    if ([string]::IsNullOrEmpty($RunFolder)) { return }
+    _SetStatus "Loading index: $([System.IO.Path]::GetFileName($RunFolder)) …"
+
+    $script:State.CurrentRunFolder = $RunFolder
+    $script:State.DiagnosticsContext = $RunFolder
+
+    # Load or build index (may take a moment for large runs)
+    $allIdx = Load-RunIndex -RunFolder $RunFolder
+    $script:State.CurrentPage = 1
+    _ApplyFiltersAndRefresh -AllIndex $allIdx
+    _SetStatus "Loaded $($allIdx.Count) records from $([System.IO.Path]::GetFileName($RunFolder))"
+    $script:TxtStatusRight.Text = [datetime]::Now.ToString('HH:mm:ss')
+}
+
+function _ApplyFiltersAndRefresh {
+    param([object[]]$AllIndex = $null)
+
+    if ($null -eq $AllIndex) {
+        if ($null -eq $script:State.CurrentRunFolder) { return }
+        $AllIndex = Load-RunIndex -RunFolder $script:State.CurrentRunFolder
+    }
+
+    $dir    = $script:State.FilterDirection
+    $media  = $script:State.FilterMedia
+    $search = $script:State.SearchText
+
+    $filtered = $AllIndex | Where-Object {
+        $ok = $true
+        if ($dir    -and $_.direction -ne $dir)          { $ok = $false }
+        if ($media  -and $_.mediaType -ne $media)         { $ok = $false }
+        if ($search) {
+            $lo = $search.ToLowerInvariant()
+            if ($_.id    -notlike "*$lo*" -and
+                $_.queue -notlike "*$lo*") { $ok = $false }
+        }
+        $ok
+    }
+    $script:State.CurrentIndex = @($filtered)
+    $script:State.TotalPages   = [math]::Max(1, [math]::Ceiling($filtered.Count / $script:State.PageSize))
+    $script:State.CurrentImpactReport = $null
+    if ($script:State.CurrentPage -gt $script:State.TotalPages) {
+        $script:State.CurrentPage = $script:State.TotalPages
+    }
+    _RenderCurrentPage
+    _RefreshReportButtons
+}
+
+function _RenderCurrentPage {
+    $idx      = $script:State.CurrentIndex
+    $page     = $script:State.CurrentPage
+    $pageSize = $script:State.PageSize
+    $total    = $idx.Count
+    $pages    = $script:State.TotalPages
+
+    $startIdx = ($page - 1) * $pageSize
+    $endIdx   = [math]::Min($startIdx + $pageSize - 1, $total - 1)
+
+    if ($startIdx -gt $endIdx -or $total -eq 0) {
+        _Dispatch {
+            $script:DgConversations.ItemsSource = $null
+            $script:TxtPageInfo.Text = 'Page 0 of 0  |  0 records'
+        }
+        return
+    }
+
+    $pageEntries = $idx[$startIdx..$endIdx]
+    $displayRows = $pageEntries | ForEach-Object { Get-ConversationDisplayRow -IndexEntry $_ }
+
+    _Dispatch {
+        $script:DgConversations.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($displayRows)
+        $script:TxtPageInfo.Text = "Page $page of $pages  |  $total records"
+        $script:BtnPrevPage.IsEnabled = ($page -gt 1)
+        $script:BtnNextPage.IsEnabled = ($page -lt $pages)
+    }
+}
+
+# ── Drilldown ─────────────────────────────────────────────────────────────────
+
+function _LoadDrilldown {
+    param([string]$ConversationId)
+    if ($null -eq $script:State.CurrentRunFolder) { return }
+
+    $script:State.CurrentImpactReport = $null
+    _RefreshReportButtons
+    _SetStatus "Loading drilldown: $ConversationId …"
+    $record = Get-ConversationRecord -RunFolder $script:State.CurrentRunFolder -ConversationId $ConversationId
+
+    if ($null -eq $record) {
+        _Dispatch {
+            $script:LblSelectedConversation.Text = "(not found)"
+            $script:TxtDrillSummary.Text = "Record not found for conversation ID: $ConversationId"
+        }
+        _SetStatus "Drilldown: record not found"
+        return
+    }
+
+    _Dispatch {
+        $script:LblSelectedConversation.Text = $ConversationId
+
+        # ── Summary tab ──
+        $flat = ConvertTo-FlatRow -Record $record -IncludeAttributes
+        $sb   = New-Object System.Text.StringBuilder
+        foreach ($k in $flat.Keys) {
+            [void]$sb.AppendLine("$($k): $($flat[$k])")
+        }
+        $script:TxtDrillSummary.Text = $sb.ToString()
+
+        # ── Participants tab ──
+        $parts = @()
+        if ($record.PSObject.Properties['participants']) { $parts = @($record.participants) }
+        $script:DgParticipants.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($parts)
+
+        # ── Segments tab ──
+        $segRows = New-Object System.Collections.Generic.List[object]
+        foreach ($p in $parts) {
+            if (-not $p.PSObject.Properties['sessions']) { continue }
+            foreach ($s in @($p.sessions)) {
+                if (-not $s.PSObject.Properties['segments']) { continue }
+                foreach ($seg in @($s.segments)) {
+                    $durSec = 0
+                    if ($seg.PSObject.Properties['segmentStart'] -and $seg.PSObject.Properties['segmentEnd']) {
+                        try {
+                            $ss = [datetime]::Parse($seg.segmentStart)
+                            $se = [datetime]::Parse($seg.segmentEnd)
+                            $durSec = [int]($se - $ss).TotalSeconds
+                        } catch { }
+                    }
+                    $segRows.Add([pscustomobject]@{
+                        Purpose       = if ($p.PSObject.Properties['purpose']) { $p.purpose } else { '' }
+                        SegmentType   = if ($seg.PSObject.Properties['segmentType'])   { $seg.segmentType }   else { '' }
+                        SegmentStart  = if ($seg.PSObject.Properties['segmentStart'])  { $seg.segmentStart }  else { '' }
+                        SegmentEnd    = if ($seg.PSObject.Properties['segmentEnd'])    { $seg.segmentEnd }    else { '' }
+                        DurationSec   = $durSec
+                        QueueName     = if ($seg.PSObject.Properties['queueName'])     { $seg.queueName }     else { '' }
+                        DisconnectType = if ($seg.PSObject.Properties['disconnectType']) { $seg.disconnectType } else { '' }
+                    })
+                }
+            }
+        }
+        $script:DgSegments.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($segRows.ToArray())
+
+        # ── Attributes tab ──
+        $attrRows = New-Object System.Collections.Generic.List[object]
+        if ($record.PSObject.Properties['attributes'] -and $null -ne $record.attributes) {
+            foreach ($prop in $record.attributes.PSObject.Properties) {
+                $attrRows.Add([pscustomobject]@{ Name = $prop.Name; Value = $prop.Value })
+            }
+        }
+        $attrArray = $attrRows.ToArray()
+        $script:DgAttributes.Tag = $attrArray
+        $script:DgAttributes.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($attrArray)
+
+        # ── MOS / Quality tab ──
+        $mosSb = New-Object System.Text.StringBuilder
+        foreach ($p in $parts) {
+            if (-not $p.PSObject.Properties['sessions']) { continue }
+            foreach ($s in @($p.sessions)) {
+                if (-not $s.PSObject.Properties['metrics']) { continue }
+                foreach ($m in @($s.metrics)) {
+                    if ($m.PSObject.Properties['name'] -and ($m.name -like '*mos*' -or $m.name -like '*Mos*')) {
+                        [void]$mosSb.AppendLine("Metric : $($m.name)")
+                        if ($m.PSObject.Properties['stats']) {
+                            $st = $m.stats
+                            [void]$mosSb.AppendLine("  Stats: $($st | ConvertTo-Json -Compress)")
+                        }
+                        [void]$mosSb.AppendLine()
+                    }
+                }
+            }
+        }
+        $script:TxtMosQuality.Text = if ($mosSb.Length -eq 0) { '(no MOS metrics)' } else { $mosSb.ToString() }
+
+        # ── Raw JSON tab ──
+        $script:TxtRawJson.Text = $record | ConvertTo-Json -Depth 20
+    }
+    _SetStatus "Drilldown loaded: $ConversationId"
+}
+
+# ── Run orchestration ─────────────────────────────────────────────────────────
+
+function _GetDatasetParameters {
+    $params = @{}
+    $range  = _GetQueryBoundaryDateTimes
+
+    if ($null -ne $range.Start) {
+        $params['StartDateTime'] = $range.Start.ToString('o')
+    }
+    if ($null -ne $range.End) {
+        $params['EndDateTime'] = $range.End.ToString('o')
+    }
+
+    $selDir = $script:CmbDirection.SelectedItem
+    if ($selDir -and $selDir.Content -ne '(all)') {
+        $params['Direction'] = $selDir.Content
+    }
+
+    $selMedia = $script:CmbMediaType.SelectedItem
+    if ($selMedia -and $selMedia.Content -ne '(all)') {
+        $params['MediaType'] = $selMedia.Content
+    }
+
+    $q = $script:TxtQueue.Text.Trim()
+    if ($q) { $params['Queue'] = $q }
+
+    return $params
+}
+
+function _SetRunning {
+    param([bool]$IsRunning)
+    $script:State.IsRunning = $IsRunning
+    _Dispatch {
+        $script:BtnRun.IsEnabled        = -not $IsRunning
+        $script:BtnPreviewRun.IsEnabled = -not $IsRunning
+        $script:BtnCancelRun.IsEnabled  = $IsRunning
+        if (-not $IsRunning) {
+            $script:PrgRun.Value = 0
+        }
+    }
+}
+
+function _StartRunInBackground {
+    param(
+        [string]$RunType,   # 'preview' | 'full'
+        [hashtable]$DatasetParameters
+    )
+    if ($script:State.IsRunning) { return }
+
+    $cfg     = Get-AppConfig
+    $headers = Get-StoredHeaders
+    if ($null -eq $headers -or $headers.Count -eq 0) {
+        _SetStatus 'Not connected'
+        [System.Windows.MessageBox]::Show('Connect to Genesys Cloud before starting a preview or full run.', 'Not Connected')
+        return
+    }
+
+    # Resolve env-overridden paths (same logic as App.ps1)
+    $corePath    = if ($env:GENESYS_CORE_MODULE)  { $env:GENESYS_CORE_MODULE  } else { $cfg.CoreModulePath }
+    $catalogPath = if ($env:GENESYS_CORE_CATALOG) { $env:GENESYS_CORE_CATALOG } else { $cfg.CatalogPath    }
+    $schemaPath  = if ($env:GENESYS_CORE_SCHEMA)  { $env:GENESYS_CORE_SCHEMA  } else { $cfg.SchemaPath     }
+    $outputRoot  = $cfg.OutputRoot
+
+    $script:State.RunCancelled = $false
+    _SetRunning $true
+    _Dispatch {
+        $script:TxtRunStatus.Text   = "Starting $RunType run…"
+        $script:TxtConsoleStatus.Text = 'Running'
+        $script:TxtRunProgress.Text  = ''
+        $script:DgRunEvents.ItemsSource = $null
+        $script:TxtDiagnostics.Text  = ''
+    }
+
+    # Create runspace – must re-initialize CoreAdapter (module state is runspace-local)
+    $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $rs.Open()
+
+    $ps = [System.Management.Automation.PowerShell]::Create()
+    $ps.Runspace = $rs
+
+    $appDir = $PSScriptRoot
+
+    [void]$ps.AddScript({
+        param($AppDir, $CorePath, $CatalogPath, $SchemaPath, $OutputRoot, $RunType, $DatasetParams, $Headers)
+        Set-StrictMode -Version Latest
+        Import-Module (Join-Path $AppDir 'App.CoreAdapter.psm1') -Force
+        Initialize-CoreAdapter -CoreModulePath $CorePath -CatalogPath $CatalogPath -SchemaPath $SchemaPath -OutputRoot $OutputRoot
+        if ($RunType -eq 'preview') {
+            Start-PreviewRun -DatasetParameters $DatasetParams -Headers $Headers
+        } else {
+            Start-FullRun -DatasetParameters $DatasetParams -Headers $Headers
+        }
+    })
+    [void]$ps.AddArgument($appDir)
+    [void]$ps.AddArgument($corePath)
+    [void]$ps.AddArgument($catalogPath)
+    [void]$ps.AddArgument($schemaPath)
+    [void]$ps.AddArgument($outputRoot)
+    [void]$ps.AddArgument($RunType)
+    [void]$ps.AddArgument($DatasetParameters)
+    [void]$ps.AddArgument($headers)
+
+    $asyncResult = $ps.BeginInvoke()
+
+    $script:State.BackgroundRunspace = $rs
+    $script:State.BackgroundRunJob   = @{ Ps = $ps; Async = $asyncResult }
+
+    # Start polling timer
+    $timer           = New-Object System.Windows.Threading.DispatcherTimer
+    $timer.Interval  = [System.TimeSpan]::FromSeconds(2)
+    $script:State.PollingTimer = $timer
+
+    $timer.Add_Tick({
+        param($sender, $e)
+        _PollBackgroundRun
+    })
+    $timer.Start()
+}
+
+function _PollBackgroundRun {
+    $job  = $script:State.BackgroundRunJob
+    if ($null -eq $job) { return }
+
+    $ps    = $job.Ps
+    $async = $job.Async
+
+    # Update events display
+    if ($null -ne $script:State.CurrentRunFolder) {
+        $events = Get-RunEvents -RunFolder $script:State.CurrentRunFolder -LastN 50
+        if ($events.Count -gt 0) {
+            _Dispatch {
+                $script:DgRunEvents.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($events)
+            }
+        }
+    } else {
+        # Try to find the run folder that was just created
+        $cfg     = Get-AppConfig
+        $folders = Get-RecentRunFolders -OutputRoot $cfg.OutputRoot -Max 1
+        if ($folders.Count -gt 0) {
+            $script:State.CurrentRunFolder   = $folders[0]
+            $script:State.DiagnosticsContext = $folders[0]
+        }
+    }
+
+    # Show run status
+    $statusText = if ($script:State.RunCancelled) { 'Cancelling…' } else { 'Running…' }
+    _Dispatch {
+        $script:TxtRunStatus.Text     = $statusText
+        $script:TxtConsoleStatus.Text = $statusText
+    }
+
+    if (-not $async.IsCompleted) { return }
+
+    # Run finished
+    $script:State.PollingTimer.Stop()
+    $script:State.PollingTimer = $null
+
+    $errors = $ps.Streams.Error
+    $endInvokeFailure = $null
+    try {
+        $ps.EndInvoke($async) | Out-Null
+    } catch {
+        $endInvokeFailure = $_
+    } finally {
+        try { $ps.Dispose() } catch { }
+        if ($null -ne $script:State.BackgroundRunspace) {
+            try { $script:State.BackgroundRunspace.Close() } catch { }
+        }
+        $script:State.BackgroundRunJob   = $null
+        $script:State.BackgroundRunspace = $null
+    }
+
+    _SetRunning $false
+
+    if ($null -ne $endInvokeFailure -or $errors.Count -gt 0) {
+        $errParts = @()
+        if ($null -ne $endInvokeFailure) { $errParts += $endInvokeFailure.ToString() }
+        if ($errors.Count -gt 0) { $errParts += ($errors | ForEach-Object { $_.ToString() }) }
+        $errText = ($errParts | Where-Object { $_ }) -join "`n"
+        _Dispatch {
+            $script:TxtRunStatus.Text     = "Run failed"
+            $script:TxtConsoleStatus.Text = "Failed"
+            $script:TxtDiagnostics.Text   = $errText
+        }
+        $topError = if ($null -ne $endInvokeFailure) { $endInvokeFailure } elseif ($errors.Count -gt 0) { $errors[0] } else { 'Unknown background run failure' }
+        _SetStatus "Run failed: $topError"
+        return
+    }
+
+    # Load run results
+    if ($null -ne $script:State.CurrentRunFolder) {
+        Add-RecentRun -RunFolder $script:State.CurrentRunFolder
+        _RefreshRecentRuns
+        _LoadRunAndRefreshGrid -RunFolder $script:State.CurrentRunFolder
+    }
+
+    _Dispatch {
+        $script:TxtRunStatus.Text     = 'Run complete'
+        $script:TxtConsoleStatus.Text = 'Complete'
+        if ($null -ne $script:State.DiagnosticsContext) {
+            $script:TxtDiagnostics.Text = Get-DiagnosticsText -RunFolder $script:State.DiagnosticsContext
+        }
+    }
+    _SetStatus 'Run complete'
+}
+
+function _CancelBackgroundRun {
+    if (-not $script:State.IsRunning) { return }
+    $script:State.RunCancelled = $true
+    $job = $script:State.BackgroundRunJob
+    if ($null -ne $job) {
+        try { $job.Ps.Stop() } catch { }
+    }
+    $script:State.PollingTimer.Stop()
+    $script:State.PollingTimer = $null
+    _SetRunning $false
+    _Dispatch {
+        $script:TxtRunStatus.Text     = 'Run cancelled'
+        $script:TxtConsoleStatus.Text = 'Cancelled'
+    }
+    _SetStatus 'Run cancelled'
+}
+
+# ── Connect dialog ─────────────────────────────────────────────────────────────
+
+function _ShowConnectDialog {
+    $cfg     = Get-AppConfig
+    $dialog  = New-Object System.Windows.Window
+    $dialog.Title   = 'Connect to Genesys Cloud'
+    $dialog.Width   = 440
+    $dialog.Height  = 360
+    $dialog.Owner   = $script:Window
+    $dialog.WindowStartupLocation = 'CenterOwner'
+    $bc = [System.Windows.Media.BrushConverter]::new()
+    $dialog.Background = $bc.ConvertFromString('#1E1E2E')
+    $dialog.Foreground = $bc.ConvertFromString('#CDD6F4')
+
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Margin = [System.Windows.Thickness]::new(16)
+
+    function _AddLbl { param($t) $lbl = New-Object System.Windows.Controls.TextBlock; $lbl.Text = $t; $lbl.Margin = [System.Windows.Thickness]::new(0,6,0,2); $sp.Children.Add($lbl) | Out-Null }
+    function _AddTxt { param($name,$ph) $tb = New-Object System.Windows.Controls.TextBox; $tb.Name=$name; $tb.Height=28; $tb.Tag=$ph; $sp.Children.Add($tb) | Out-Null; return $tb }
+    function _AddPwd { $pw = New-Object System.Windows.Controls.PasswordBox; $pw.Height=28; $sp.Children.Add($pw) | Out-Null; return $pw }
+
+    _AddLbl 'Region (e.g. mypurecloud.com)'
+    $tbRegion = _AddTxt 'tbRegion' 'mypurecloud.com'
+    $tbRegion.Text = $cfg.Region
+
+    _AddLbl 'Client ID'
+    $tbClientId = _AddTxt 'tbClientId' ''
+
+    _AddLbl 'Client Secret (leave empty for PKCE)'
+    $pwSecret = _AddPwd
+
+    $pnlBtns = New-Object System.Windows.Controls.StackPanel
+    $pnlBtns.Orientation = 'Horizontal'
+    $pnlBtns.HorizontalAlignment = 'Right'
+    $pnlBtns.Margin = [System.Windows.Thickness]::new(0, 12, 0, 0)
+
+    $btnPkce = New-Object System.Windows.Controls.Button
+    $btnPkce.Content = 'Browser / PKCE'
+    $btnPkce.Width   = 130; $btnPkce.Height = 30; $btnPkce.Margin = [System.Windows.Thickness]::new(0,0,8,0)
+
+    $btnLogin = New-Object System.Windows.Controls.Button
+    $btnLogin.Content = 'Login'
+    $btnLogin.Width   = 80; $btnLogin.Height = 30; $btnLogin.Margin = [System.Windows.Thickness]::new(0,0,8,0)
+
+    $btnCancel = New-Object System.Windows.Controls.Button
+    $btnCancel.Content = 'Cancel'
+    $btnCancel.Width   = 70; $btnCancel.Height = 30
+
+    $pnlBtns.Children.Add($btnPkce)   | Out-Null
+    $pnlBtns.Children.Add($btnLogin)  | Out-Null
+    $pnlBtns.Children.Add($btnCancel) | Out-Null
+    $sp.Children.Add($pnlBtns) | Out-Null
+
+    $dialog.Content = $sp
+
+    $btnLogin.Add_Click({
+        $region   = $tbRegion.Text.Trim()
+        $clientId = $tbClientId.Text.Trim()
+        $secret   = $pwSecret.Password
+        if (-not $region -or -not $clientId -or -not $secret) {
+            [System.Windows.MessageBox]::Show('Region, Client ID, and Secret are required for client-credentials login.', 'Validation')
+            return
+        }
+        try {
+            Connect-GenesysCloudApp -ClientId $clientId -ClientSecret $secret -Region $region | Out-Null
+            Update-AppConfig -Key 'Region' -Value $region
+            _UpdateConnectionStatus
+            _SetStatus "Connected ($region)"
+            $dialog.Close()
+        } catch {
+            [System.Windows.MessageBox]::Show("Login failed: $_", 'Error')
+        }
+    })
+
+    $btnPkce.Add_Click({
+        $region   = $tbRegion.Text.Trim()
+        $clientId = $tbClientId.Text.Trim()
+        if (-not $region -or -not $clientId) {
+            [System.Windows.MessageBox]::Show('Region and Client ID are required for PKCE login.', 'Validation')
+            return
+        }
+        $cfg2       = Get-AppConfig
+        $redirectUri = if ($cfg2.PkceRedirectUri) { $cfg2.PkceRedirectUri } else { 'http://localhost:8080/callback' }
+
+        $dialog.Close()
+
+        # Run PKCE in a separate runspace so it doesn't block the UI
+        $cts = New-Object System.Threading.CancellationTokenSource
+        $script:State.PkceCancel = $cts
+
+        $rs2  = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace(); $rs2.Open()
+        $ps2  = [System.Management.Automation.PowerShell]::Create(); $ps2.Runspace = $rs2
+        $appDir = $PSScriptRoot
+        [void]$ps2.AddScript({
+            param($AppDir, $ClientId, $Region, $RedirectUri, $CancelToken)
+            Import-Module (Join-Path $AppDir 'App.Auth.psm1') -Force
+            Connect-GenesysCloudPkce -ClientId $ClientId -Region $Region `
+                -RedirectUri $RedirectUri -CancellationToken $CancelToken
+        })
+        [void]$ps2.AddArgument($appDir)
+        [void]$ps2.AddArgument($clientId)
+        [void]$ps2.AddArgument($region)
+        [void]$ps2.AddArgument($redirectUri)
+        [void]$ps2.AddArgument($cts.Token)
+
+        $ar2 = $ps2.BeginInvoke()
+
+        # Poll for PKCE completion
+        $pkceTimer = New-Object System.Windows.Threading.DispatcherTimer
+        $pkceTimer.Interval = [System.TimeSpan]::FromSeconds(1)
+        $pkceTimer.Add_Tick({
+            if (-not $ar2.IsCompleted) { return }
+            $pkceTimer.Stop()
+            try {
+                $ps2.EndInvoke($ar2) | Out-Null
+                $rs2.Close()
+                _UpdateConnectionStatus
+                Update-AppConfig -Key 'Region' -Value $region
+                _SetStatus "Connected via PKCE ($region)"
+            } catch {
+                [System.Windows.MessageBox]::Show("PKCE login failed: $_", 'Error')
+            }
+        })
+        $pkceTimer.Start()
+    })
+
+    $btnCancel.Add_Click({ $dialog.Close() })
+    $dialog.ShowDialog() | Out-Null
+}
+
+# ── Settings dialog ─────────────────────────────────────────────────────────
+
+function _ShowSettingsDialog {
+    $cfg    = Get-AppConfig
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title  = 'Settings'
+    $dialog.Width  = 560; $dialog.Height = 420
+    $dialog.Owner  = $script:Window
+    $dialog.WindowStartupLocation = 'CenterOwner'
+
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Margin = [System.Windows.Thickness]::new(16)
+
+    function _Row { param($label, $val)
+        $g = New-Object System.Windows.Controls.Grid
+        $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = [System.Windows.GridLength]::new(160)
+        $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+        $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
+        $g.Margin = [System.Windows.Thickness]::new(0,4,0,0)
+        $lbl = New-Object System.Windows.Controls.TextBlock; $lbl.Text = $label; $lbl.VerticalAlignment = 'Center'
+        [System.Windows.Controls.Grid]::SetColumn($lbl, 0)
+        $tb  = New-Object System.Windows.Controls.TextBox; $tb.Text = $val; $tb.Height = 26
+        [System.Windows.Controls.Grid]::SetColumn($tb, 1)
+        $g.Children.Add($lbl) | Out-Null; $g.Children.Add($tb) | Out-Null
+        $sp.Children.Add($g) | Out-Null
+        return $tb
+    }
+
+    $tbPageSize      = _Row 'Page size'            $cfg.PageSize
+    $tbPrevPageSize  = _Row 'Preview page size'    $cfg.PreviewPageSize
+    $tbRegion        = _Row 'Region'               $cfg.Region
+    $tbOutputRoot    = _Row 'Output root'          $cfg.OutputRoot
+    $tbDatabasePath  = _Row 'Database path'        $cfg.DatabasePath
+    $tbSqliteDll     = _Row 'SQLite DLL path'      $cfg.SqliteDllPath
+    $tbCorePath      = _Row 'Core module path'     $cfg.CoreModulePath
+    $tbCatalogPath   = _Row 'Catalog path'         $cfg.CatalogPath
+    $tbPkceClientId  = _Row 'PKCE client ID'       $cfg.PkceClientId
+    $tbPkceRedirect  = _Row 'PKCE redirect URI'    $cfg.PkceRedirectUri
+
+    $pnlBtns = New-Object System.Windows.Controls.StackPanel
+    $pnlBtns.Orientation = 'Horizontal'; $pnlBtns.HorizontalAlignment = 'Right'
+    $pnlBtns.Margin = [System.Windows.Thickness]::new(0,12,0,0)
+
+    $btnSave   = New-Object System.Windows.Controls.Button; $btnSave.Content = 'Save';   $btnSave.Width = 80; $btnSave.Height = 30; $btnSave.Margin = [System.Windows.Thickness]::new(0,0,8,0)
+    $btnCancelS = New-Object System.Windows.Controls.Button; $btnCancelS.Content = 'Cancel'; $btnCancelS.Width = 70; $btnCancelS.Height = 30
+    $pnlBtns.Children.Add($btnSave) | Out-Null; $pnlBtns.Children.Add($btnCancelS) | Out-Null
+    $sp.Children.Add($pnlBtns) | Out-Null
+
+    $dialog.Content = $sp
+
+    $btnSave.Add_Click({
+        try {
+            $cfg2 = Get-AppConfig
+            $cfg2 | Add-Member -NotePropertyName 'PageSize'          -NotePropertyValue ([int]$tbPageSize.Text)     -Force
+            $cfg2 | Add-Member -NotePropertyName 'PreviewPageSize'   -NotePropertyValue ([int]$tbPrevPageSize.Text)  -Force
+            $cfg2 | Add-Member -NotePropertyName 'Region'            -NotePropertyValue $tbRegion.Text.Trim()        -Force
+            $cfg2 | Add-Member -NotePropertyName 'OutputRoot'        -NotePropertyValue $tbOutputRoot.Text.Trim()    -Force
+            $cfg2 | Add-Member -NotePropertyName 'DatabasePath'      -NotePropertyValue $tbDatabasePath.Text.Trim()  -Force
+            $cfg2 | Add-Member -NotePropertyName 'SqliteDllPath'     -NotePropertyValue $tbSqliteDll.Text.Trim()     -Force
+            $cfg2 | Add-Member -NotePropertyName 'CoreModulePath'    -NotePropertyValue $tbCorePath.Text.Trim()      -Force
+            $cfg2 | Add-Member -NotePropertyName 'CatalogPath'       -NotePropertyValue $tbCatalogPath.Text.Trim()   -Force
+            $cfg2 | Add-Member -NotePropertyName 'PkceClientId'      -NotePropertyValue $tbPkceClientId.Text.Trim()  -Force
+            $cfg2 | Add-Member -NotePropertyName 'PkceRedirectUri'   -NotePropertyValue $tbPkceRedirect.Text.Trim()  -Force
+            Save-AppConfig -Config $cfg2
+            $script:State.PageSize = [int]$tbPageSize.Text
+            $dialog.Close()
+            _SetStatus 'Settings saved'
+        } catch {
+            [System.Windows.MessageBox]::Show("Save failed: $_", 'Error')
+        }
+    })
+    $btnCancelS.Add_Click({ $dialog.Close() })
+    $dialog.ShowDialog() | Out-Null
+}
+
+# ── Export actions ────────────────────────────────────────────────────────────
+
+function _ExportPageCsv {
+    if ($null -eq $script:State.CurrentRunFolder) { _SetStatus 'No run loaded'; return }
+
+    $dlg = New-Object Microsoft.Win32.SaveFileDialog
+    $dlg.Title      = 'Export Page to CSV'
+    $dlg.Filter     = 'CSV files (*.csv)|*.csv'
+    $dlg.FileName   = "page_$($script:State.CurrentPage).csv"
+    if (-not $dlg.ShowDialog()) { return }
+
+    $idx      = $script:State.CurrentIndex
+    $page     = $script:State.CurrentPage
+    $pageSize = $script:State.PageSize
+    $startIdx = ($page - 1) * $pageSize
+    $endIdx   = [math]::Min($startIdx + $pageSize - 1, $idx.Count - 1)
+    if ($startIdx -gt $endIdx) { return }
+
+    $entries  = $idx[$startIdx..$endIdx]
+    $records  = Get-IndexedPage -RunFolder $script:State.CurrentRunFolder -IndexEntries $entries
+    Export-PageToCsv -Records $records -OutputPath $dlg.FileName
+    _SetStatus "Exported page to $($dlg.FileName)"
+}
+
+function _ExportRunCsv {
+    if ($null -eq $script:State.CurrentRunFolder) { _SetStatus 'No run loaded'; return }
+
+    $dlg = New-Object Microsoft.Win32.SaveFileDialog
+    $dlg.Title    = 'Export Full Run to CSV'
+    $dlg.Filter   = 'CSV files (*.csv)|*.csv'
+    $dlg.FileName = "run_export.csv"
+    if (-not $dlg.ShowDialog()) { return }
+
+    try {
+        _SetStatus 'Exporting…'
+        Export-RunToCsv -RunFolder $script:State.CurrentRunFolder -OutputPath $dlg.FileName
+        _SetStatus "Exported full run to $($dlg.FileName)"
+    } catch {
+        [System.Windows.MessageBox]::Show("Export failed: $_", 'Error')
+        _SetStatus 'Export failed'
+    }
+}
+
+function _ExportConversationJson {
+    if ($null -eq $script:State.CurrentRunFolder) { return }
+    $convId = $script:LblSelectedConversation.Text
+    if ($convId -eq '(none selected)' -or [string]::IsNullOrEmpty($convId)) { return }
+
+    $dlg = New-Object Microsoft.Win32.SaveFileDialog
+    $dlg.Title    = 'Export Conversation to JSON'
+    $dlg.Filter   = 'JSON files (*.json)|*.json'
+    $dlg.FileName = "$convId.json"
+    if (-not $dlg.ShowDialog()) { return }
+
+    $record = Get-ConversationRecord -RunFolder $script:State.CurrentRunFolder -ConversationId $convId
+    if ($null -eq $record) { _SetStatus 'Conversation not found'; return }
+    Export-ConversationToJson -Record $record -OutputPath $dlg.FileName
+    _SetStatus "Exported conversation to $($dlg.FileName)"
+}
+
+# ── Attribute search filter ────────────────────────────────────────────────────
+
+function _FilterAttributes {
+    $search = $script:TxtAttributeSearch.Text.Trim().ToLowerInvariant()
+    $all    = $script:DgAttributes.Tag   # stored on Tag
+    if ($null -eq $all) { return }
+    if (-not $search) {
+        $script:DgAttributes.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($all)
+        return
+    }
+    $filtered = @($all | Where-Object { $_.Name -like "*$search*" -or $_.Value -like "*$search*" })
+    $script:DgAttributes.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[object]]($filtered)
+}
+
+# ── Event wire-up ─────────────────────────────────────────────────────────────
+
+$script:BtnConnect.Add_Click({ _ShowConnectDialog })
+
+$script:BtnSettings.Add_Click({ _ShowSettingsDialog })
+
+$script:BtnManageCase.Add_Click({ _ShowCaseDialog | Out-Null })
+
+$script:BtnImportRun.Add_Click({ _ImportCurrentRunToCase })
+
+$script:BtnRun.Add_Click({
+    try {
+        $params = _GetDatasetParameters
+        _StartRunInBackground -RunType 'full' -DatasetParameters $params
+    } catch {
+        _SetStatus 'Invalid date/time range'
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Validation')
+    }
+})
+
+$script:BtnPreviewRun.Add_Click({
+    $pageSizeText = $script:TxtPreviewPageSize.Text.Trim()
+    $previewSize  = 25
+    if ($pageSizeText -match '^\d+$') { $previewSize = [int]$pageSizeText }
+    try {
+        $params = _GetDatasetParameters
+        $params['PageSize'] = $previewSize
+        _StartRunInBackground -RunType 'preview' -DatasetParameters $params
+    } catch {
+        _SetStatus 'Invalid date/time range'
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Validation')
+    }
+})
+
+$script:BtnCancelRun.Add_Click({ _CancelBackgroundRun })
+
+$script:BtnSearch.Add_Click({
+    $script:State.SearchText    = $script:TxtSearch.Text.Trim()
+    $script:State.CurrentPage   = 1
+    _ApplyFiltersAndRefresh
+})
+
+$script:TxtSearch.Add_KeyDown({
+    param($sender, $e)
+    if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+        $script:State.SearchText  = $script:TxtSearch.Text.Trim()
+        $script:State.CurrentPage = 1
+        _ApplyFiltersAndRefresh
+    }
+})
+
+$script:CmbFilterDirection.Add_SelectionChanged({
+    $sel = $script:CmbFilterDirection.SelectedItem
+    $script:State.FilterDirection = if ($sel -and $sel.Content -ne 'All directions') { $sel.Content } else { '' }
+    $script:State.CurrentPage     = 1
+    _ApplyFiltersAndRefresh
+})
+
+$script:CmbFilterMedia.Add_SelectionChanged({
+    $sel = $script:CmbFilterMedia.SelectedItem
+    $script:State.FilterMedia = if ($sel -and $sel.Content -ne 'All media') { $sel.Content } else { '' }
+    $script:State.CurrentPage = 1
+    _ApplyFiltersAndRefresh
+})
+
+$script:BtnPrevPage.Add_Click({
+    if ($script:State.CurrentPage -gt 1) {
+        $script:State.CurrentPage--
+        _RenderCurrentPage
+    }
+})
+
+$script:BtnNextPage.Add_Click({
+    if ($script:State.CurrentPage -lt $script:State.TotalPages) {
+        $script:State.CurrentPage++
+        _RenderCurrentPage
+    }
+})
+
+$script:DgConversations.Add_SelectionChanged({
+    $sel = $script:DgConversations.SelectedItem
+    if ($null -ne $sel) {
+        $convId = $sel.ConversationId
+        _LoadDrilldown -ConversationId $convId
+        # Switch to Drilldown tab
+        $tabCtrl = _Ctrl 'TabWorkspace'
+        $tabCtrl.SelectedIndex = 1
+    }
+})
+
+$script:BtnOpenRun.Add_Click({
+    $sel = $script:LstRecentRuns.SelectedItem
+    if ($null -ne $sel -and $sel.FullPath) {
+        _LoadRunAndRefreshGrid -RunFolder $sel.FullPath
+    }
+})
+
+$script:LstRecentRuns.Add_MouseDoubleClick({
+    $sel = $script:LstRecentRuns.SelectedItem
+    if ($null -ne $sel -and $sel.FullPath) {
+        _LoadRunAndRefreshGrid -RunFolder $sel.FullPath
+    }
+})
+
+$script:BtnExportPageCsv.Add_Click({ _ExportPageCsv })
+
+$script:BtnExportRunCsv.Add_Click({ _ExportRunCsv })
+
+if ($null -ne $script:BtnGenerateReport) {
+    $script:BtnGenerateReport.Add_Click({ _GenerateImpactReport })
+}
+
+if ($null -ne $script:BtnSaveReportSnapshot) {
+    $script:BtnSaveReportSnapshot.Add_Click({ _SaveImpactReportSnapshot })
+}
+
+$script:BtnCopyDiagnostics.Add_Click({
+    $diagText = $script:TxtDiagnostics.Text
+    if (-not [string]::IsNullOrEmpty($diagText)) {
+        [System.Windows.Clipboard]::SetText($diagText)
+        _SetStatus 'Diagnostics copied to clipboard'
+    } elseif ($null -ne $script:State.DiagnosticsContext) {
+        $txt = Get-DiagnosticsText -RunFolder $script:State.DiagnosticsContext
+        $script:TxtDiagnostics.Text = $txt
+        [System.Windows.Clipboard]::SetText($txt)
+        _SetStatus 'Diagnostics collected and copied'
+    }
+})
+
+$script:TxtAttributeSearch.Add_TextChanged({
+    _FilterAttributes
+})
+
+# ── Initialise UI state ────────────────────────────────────────────────────────
+
+$cfg = Get-AppConfig
+$script:State.PageSize = $cfg.PageSize
+
+# Restore last dates
+if ($cfg.LastStartDate) {
+    try { $script:DtpStartDate.SelectedDate = [datetime]::Parse($cfg.LastStartDate) } catch { }
+}
+if ($cfg.LastEndDate) {
+    try { $script:DtpEndDate.SelectedDate = [datetime]::Parse($cfg.LastEndDate) } catch { }
+}
+$script:TxtStartTime.Text = if ([string]::IsNullOrWhiteSpace([string]$cfg.LastStartTime)) { '00:00:00' } else { [string]$cfg.LastStartTime }
+$script:TxtEndTime.Text   = if ([string]::IsNullOrWhiteSpace([string]$cfg.LastEndTime))   { '23:59:59' } else { [string]$cfg.LastEndTime }
+
+_RefreshRecentRuns
+_RefreshActiveCaseStatus
+_UpdateConnectionStatus
+_RefreshReportButtons
+
+if ($script:DatabaseWarning) {
+    _SetStatus "WARNING: $script:DatabaseWarning"
+    $script:TxtStatusRight.Text = 'Case store offline'
+} else {
+    _SetStatus 'Ready'
+}
