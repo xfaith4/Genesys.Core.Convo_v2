@@ -28,6 +28,18 @@ function Get-ConversationDisplayRow {
     }
 }
 
+function _GetAttributeColumnNamesFromRecord {
+    param([Parameter(Mandatory)][object]$Record)
+
+    if (-not $Record.PSObject.Properties['attributes']) { return @() }
+    $attrs = $Record.attributes
+    if ($null -eq $attrs) { return @() }
+
+    return @($attrs.PSObject.Properties |
+        ForEach-Object { "attr_$($_.Name)" } |
+        Sort-Object -Unique)
+}
+
 function ConvertTo-FlatRow {
     <#
     .SYNOPSIS
@@ -36,7 +48,8 @@ function ConvertTo-FlatRow {
     #>
     param(
         [Parameter(Mandatory)][object]$Record,
-        [switch]$IncludeAttributes
+        [switch]$IncludeAttributes,
+        [string[]]$AttributeColumns = @()
     )
 
     $row = [ordered]@{}
@@ -156,11 +169,27 @@ function ConvertTo-FlatRow {
     $row['mosMean']         = if ($mosSamples -gt 0) { [math]::Round($mosSum / $mosSamples, 3) } else { '' }
 
     # Optional attribute flattening
-    if ($IncludeAttributes -and $Record.PSObject.Properties['attributes']) {
-        $attrs = $Record.attributes
-        if ($null -ne $attrs) {
-            foreach ($prop in $attrs.PSObject.Properties) {
-                $row["attr_$($prop.Name)"] = $prop.Value
+    if ($IncludeAttributes) {
+        $attributeMap = @{}
+        if ($Record.PSObject.Properties['attributes']) {
+            $attrs = $Record.attributes
+            if ($null -ne $attrs) {
+                foreach ($prop in $attrs.PSObject.Properties) {
+                    $attributeMap["attr_$($prop.Name)"] = $prop.Value
+                }
+            }
+        }
+
+        $columns = @($AttributeColumns)
+        if ($columns.Count -eq 0) {
+            $columns = @($attributeMap.Keys | Sort-Object)
+        }
+
+        foreach ($column in $columns) {
+            if ($attributeMap.ContainsKey($column)) {
+                $row[$column] = $attributeMap[$column]
+            } else {
+                $row[$column] = ''
             }
         }
     }
@@ -178,8 +207,16 @@ function Export-PageToCsv {
         [Parameter(Mandatory)][string]$OutputPath,
         [switch]$IncludeAttributes
     )
+
+    $attributeColumns = @()
+    if ($IncludeAttributes) {
+        $attributeColumns = @($Records |
+            ForEach-Object { _GetAttributeColumnNamesFromRecord -Record $_ } |
+            Sort-Object -Unique)
+    }
+
     $rows = foreach ($r in $Records) {
-        [pscustomobject](ConvertTo-FlatRow -Record $r -IncludeAttributes:$IncludeAttributes)
+        [pscustomobject](ConvertTo-FlatRow -Record $r -IncludeAttributes:$IncludeAttributes -AttributeColumns $attributeColumns)
     }
     $rows | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
 }
@@ -211,6 +248,35 @@ function Export-RunToCsv {
         $outFs,
         (New-Object System.Text.UTF8Encoding($true)))  # UTF-8 with BOM for Excel compat
 
+    $attributeColumns = @()
+    if ($IncludeAttributes) {
+        $attrSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($dataFile in $dataFiles) {
+            $scanFs = [System.IO.FileStream]::new(
+                $dataFile,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::Read)
+            $scanSr = [System.IO.StreamReader]::new($scanFs, [System.Text.Encoding]::UTF8)
+            try {
+                while (-not $scanSr.EndOfStream) {
+                    $line = $scanSr.ReadLine()
+                    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                    try {
+                        $record = $line | ConvertFrom-Json
+                        foreach ($column in @(_GetAttributeColumnNamesFromRecord -Record $record)) {
+                            $attrSet.Add($column) | Out-Null
+                        }
+                    } catch { }
+                }
+            } finally {
+                $scanSr.Dispose()
+                $scanFs.Dispose()
+            }
+        }
+        $attributeColumns = @($attrSet.GetEnumerator() | ForEach-Object { $_ } | Sort-Object)
+    }
+
     $headerWritten = $false
     try {
         foreach ($dataFile in $dataFiles) {
@@ -226,7 +292,7 @@ function Export-RunToCsv {
                     if ([string]::IsNullOrWhiteSpace($line)) { continue }
                     try {
                         $record = $line | ConvertFrom-Json
-                        $row    = ConvertTo-FlatRow -Record $record -IncludeAttributes:$IncludeAttributes
+                        $row    = ConvertTo-FlatRow -Record $record -IncludeAttributes:$IncludeAttributes -AttributeColumns $attributeColumns
 
                         if (-not $headerWritten) {
                             $header = ($row.Keys | ForEach-Object { _QuoteCsvField $_ }) -join ','

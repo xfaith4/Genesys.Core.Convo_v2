@@ -243,8 +243,8 @@ Check 'IDX-03' 'FileStream.Seek used in Get-IndexedPage' {
     $indexContent -match '\.Seek\('
 }
 
-Check 'IDX-04' 'StreamReader.DiscardBufferedData used' {
-    $indexContent -match '\.DiscardBufferedData\(\)'
+Check 'IDX-04' 'Get-IndexedPage reads records from indexed byte offsets' {
+    ($indexContent -match '\.Seek\(') -and ($indexContent -match '\.ReadByte\(')
 }
 
 Check 'IDX-05' 'Byte-offset tracking present (line offset)' {

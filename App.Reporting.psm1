@@ -13,7 +13,7 @@ function New-ImpactReport {
 
     if ($null -eq $FilteredIndex) { $FilteredIndex = @() }
     $rows = @($FilteredIndex)
-    $generatedAt = (Get-Date).ToString('o')
+    $generatedAt = [datetime]::UtcNow.ToString('o')
 
     if ($rows.Count -eq 0) {
         return [pscustomobject]@{
@@ -96,7 +96,23 @@ function New-ImpactReport {
     $conversationStarts = $rows |
         Where-Object { $_.PSObject.Properties['conversationStart'] -and $_.conversationStart } |
         ForEach-Object {
-            try { [datetime]::Parse([string]$_.conversationStart) } catch { $null }
+            $value = $_.conversationStart
+            try {
+                if ($value -is [datetimeoffset]) {
+                    return $value.ToUniversalTime()
+                }
+                if ($value -is [datetime]) {
+                    if ($value.Kind -eq [System.DateTimeKind]::Utc) {
+                        return [datetimeoffset]::new($value, [System.TimeSpan]::Zero)
+                    }
+                    if ($value.Kind -eq [System.DateTimeKind]::Local) {
+                        return [datetimeoffset]$value
+                    }
+                }
+                return [datetimeoffset]::Parse([string]$value)
+            } catch {
+                return $null
+            }
         } |
         Where-Object { $null -ne $_ } |
         Sort-Object
@@ -104,8 +120,8 @@ function New-ImpactReport {
     $timeWindow = $null
     if ($conversationStarts.Count -gt 0) {
         $timeWindow = [pscustomobject]@{
-            Start = $conversationStarts[0].ToString('o')
-            End   = $conversationStarts[$conversationStarts.Count - 1].ToString('o')
+            Start = $conversationStarts[0].UtcDateTime.ToString('o')
+            End   = $conversationStarts[$conversationStarts.Count - 1].UtcDateTime.ToString('o')
         }
     }
 

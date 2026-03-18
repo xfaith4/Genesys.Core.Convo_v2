@@ -578,7 +578,6 @@ function _ImportJsonlFileToConnection {
             if ($firstChunk -and $bytesRead -ge 3 `
                     -and $buf[0] -eq 0xEF -and $buf[1] -eq 0xBB -and $buf[2] -eq 0xBF) {
                 $startIdx   = 3
-                $chunkStart += 3
                 $lineStart   = 3
             }
             $firstChunk = $false
@@ -1364,11 +1363,15 @@ SET title = @title, summary = @summary, severity = @sev, status = @status,
     evidence_json = @evidence, updated_utc = @now
 WHERE case_id = @cid AND finding_id = @id
 '@ -P @{
-            '@title'    = if ($Title) { $Title } else { $existing.title }
-            '@summary'  = if ($Summary -or $Summary -eq '') { $Summary } else { $existing.summary }
-            '@sev'      = if ($Severity) { $Severity } else { $existing.severity }
-            '@status'   = if ($Status) { $Status } else { $existing.status }
-            '@evidence' = if ($null -ne $Evidence) { [object](_ToJsonOrNull $Evidence) } else { if ($existing.evidence_json) { [object]$existing.evidence_json } else { $null } }
+            '@title'    = if ($PSBoundParameters.ContainsKey('Title'))    { $Title }    else { $existing.title }
+            '@summary'  = if ($PSBoundParameters.ContainsKey('Summary'))  { $Summary }  else { $existing.summary }
+            '@sev'      = if ($PSBoundParameters.ContainsKey('Severity')) { $Severity } else { $existing.severity }
+            '@status'   = if ($PSBoundParameters.ContainsKey('Status'))   { $Status }   else { $existing.status }
+            '@evidence' = if ($PSBoundParameters.ContainsKey('Evidence')) {
+                if ($null -ne $Evidence) { [object](_ToJsonOrNull $Evidence) } else { $null }
+            } else {
+                if ($existing.evidence_json) { [object]$existing.evidence_json } else { $null }
+            }
             '@now'      = [datetime]::UtcNow.ToString('o')
             '@cid'      = $CaseId
             '@id'       = $FindingId

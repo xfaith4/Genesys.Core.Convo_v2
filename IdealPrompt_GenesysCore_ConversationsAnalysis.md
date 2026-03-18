@@ -130,7 +130,7 @@ Required implementation characteristics:
   - direction, media type, queue, disconnect, has MOS, has hold, counts, duration
 - Include compatibility helper for relative paths when `Path.GetRelativePath` is unavailable.
 - Compute offsets robustly for UTF-8 BOM and newline style (`LF`/`CRLF`).
-- `Get-IndexedPage` must seek offsets via `FileStream.Seek` and `StreamReader.DiscardBufferedData`.
+- `Get-IndexedPage` must retrieve records from indexed byte offsets without rescanning full files.
 
 ## `App.Export.psm1`
 

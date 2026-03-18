@@ -74,7 +74,7 @@ function _ResolveRecentRuns {
         if ([string]::IsNullOrWhiteSpace([string]$run)) { continue }
         $resolved += ,(_ResolveConfigPath -Path ([string]$run))
     }
-    return @($resolved)
+    return ,@($resolved)
 }
 
 function _HasLegacySuffix {

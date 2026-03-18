@@ -25,6 +25,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:TotalPass = 0
 $script:TotalFail = 0
+$script:TotalSkip = 0
 
 function ReadFile {
     param([string]$RelPath)
@@ -157,8 +158,8 @@ ArchCheck 'ARCH-14' 'App.Index.psm1 contains Get-IndexedPage with Seek' {
     $index -match 'function Get-IndexedPage' -and $index -match '\.Seek\('
 }
 
-ArchCheck 'ARCH-15' 'App.Index.psm1 uses DiscardBufferedData (StreamReader seek pattern)' {
-    $index -match 'DiscardBufferedData'
+ArchCheck 'ARCH-15' 'App.Index.psm1 reads indexed records via byte offsets' {
+    ($index -match '\.Seek\(') -and ($index -match '\.ReadByte\(')
 }
 
 ArchCheck 'ARCH-16' 'App.Index.psm1 writes index.jsonl' {
@@ -293,15 +294,35 @@ ArchCheck 'ARCH-39' 'All .psm1 modules use Set-StrictMode -Version Latest' {
     @($modules | Where-Object { $_ -notmatch 'Set-StrictMode.*Latest' }).Count -eq 0
 }
 
+# ── Suite 3: Runtime smoke ────────────────────────────────────────────────────
+
+Write-Host "`n╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║  Suite 3 – Runtime Smoke                        ║" -ForegroundColor Cyan
+Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+
+$smokeScript = [System.IO.Path]::Combine($PSScriptRoot, 'Invoke-SmokeTests.ps1')
+if (-not [System.IO.File]::Exists($smokeScript)) {
+    Write-Host "[ERROR] Invoke-SmokeTests.ps1 not found at: $smokeScript" -ForegroundColor Red
+    exit 1
+}
+
+$smokeResults = & $smokeScript -AppRoot $AppRoot
+$sPass = @($smokeResults | Where-Object { $_.Result -eq 'PASS' }).Count
+$sFail = @($smokeResults | Where-Object { $_.Result -eq 'FAIL' }).Count
+$sSkip = @($smokeResults | Where-Object { $_.Result -eq 'SKIP' }).Count
+$script:TotalPass += $sPass
+$script:TotalFail += $sFail
+$script:TotalSkip += $sSkip
+
 # ── Final summary ─────────────────────────────────────────────────────────────
 
 Write-Host "`n╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║                  FINAL RESULTS                  ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
-$totalAll = $script:TotalPass + $script:TotalFail
+$totalAll = $script:TotalPass + $script:TotalFail + $script:TotalSkip
 $color    = if ($script:TotalFail -eq 0) { 'Green' } else { 'Red' }
-Write-Host "  PASS: $($script:TotalPass)  FAIL: $($script:TotalFail)  TOTAL: $totalAll" -ForegroundColor $color
+Write-Host "  PASS: $($script:TotalPass)  FAIL: $($script:TotalFail)  SKIP: $($script:TotalSkip)  TOTAL: $totalAll" -ForegroundColor $color
 
 if ($script:TotalFail -eq 0) {
     Write-Host "`n  ALL CHECKS PASSED. Application is compliant." -ForegroundColor Green

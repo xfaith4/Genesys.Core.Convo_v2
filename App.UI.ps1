@@ -2167,16 +2167,6 @@ if ($null -ne $script:BtnSaveReportSnapshot) {
     $script:BtnSaveReportSnapshot.Add_Click({ _SaveImpactReportSnapshot })
 }
 
-if ($null -ne $script:BtnExpandJson) {
-    $script:BtnExpandJson.Add_Click({
-        $json = $script:TxtRawJson.Text
-        if (-not [string]::IsNullOrEmpty($json)) {
-            [System.Windows.Clipboard]::SetText($json)
-            _SetStatus 'Raw JSON copied to clipboard'
-        }
-    })
-}
-
 $script:BtnCopyDiagnostics.Add_Click({
     $diagText = $script:TxtDiagnostics.Text
     if (-not [string]::IsNullOrEmpty($diagText)) {

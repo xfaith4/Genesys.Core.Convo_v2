@@ -4,8 +4,8 @@ Set-StrictMode -Version Latest
 # ── Index module ──────────────────────────────────────────────────────────────
 # Builds and caches index.jsonl for each run folder.
 # Byte offsets are computed robustly (UTF-8 BOM + LF/CRLF).
-# Get-IndexedPage uses FileStream.Seek + StreamReader.DiscardBufferedData for
-# O(pageSize)-like retrieval without rescanning whole data files.
+# Get-IndexedPage uses indexed byte offsets for O(pageSize)-like retrieval
+# without rescanning whole data files.
 # ─────────────────────────────────────────────────────────────────────────────
 
 $script:IndexCache = @{}   # [string]RunFolder -> [object[]] index entries
@@ -71,7 +71,6 @@ function _ReadFileLines {
             if ($firstChunk -and $bytesRead -ge 3 `
                     -and $buf[0] -eq 0xEF -and $buf[1] -eq 0xBB -and $buf[2] -eq 0xBF) {
                 $startIdx   = 3
-                $chunkStart += 3
                 $lineStart   = 3
             }
             $firstChunk = $false
@@ -380,19 +379,19 @@ function Get-IndexedPage {
     <#
     .SYNOPSIS
         Retrieves the full conversation records for a page of index entries using
-        FileStream.Seek + StreamReader.DiscardBufferedData (O(pageSize) reads).
+        indexed byte offsets (O(pageSize) reads).
     #>
     param(
         [Parameter(Mandatory)][string]$RunFolder,
         [Parameter(Mandatory)][object[]]$IndexEntries
     )
 
-    # Group by file to minimise FileStream opens
-    $byFile  = $IndexEntries | Group-Object -Property file
+    if ($IndexEntries.Count -eq 0) { return @() }
+
     $results = New-Object System.Collections.Generic.List[object]
 
-    foreach ($group in $byFile) {
-        $fullPath = [System.IO.Path]::Combine($RunFolder, $group.Name)
+    foreach ($entry in $IndexEntries) {
+        $fullPath = [System.IO.Path]::Combine($RunFolder, $entry.file)
         if (-not [System.IO.File]::Exists($fullPath)) { continue }
 
         $fs = [System.IO.FileStream]::new(
@@ -400,18 +399,27 @@ function Get-IndexedPage {
             [System.IO.FileMode]::Open,
             [System.IO.FileAccess]::Read,
             [System.IO.FileShare]::Read)
-        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8)
+        $lineBytes = New-Object System.Collections.Generic.List[byte]
         try {
-            foreach ($entry in $group.Group) {
-                $fs.Seek($entry.offset, [System.IO.SeekOrigin]::Begin) | Out-Null
-                $sr.DiscardBufferedData()
-                $line = $sr.ReadLine()
+            $fs.Seek([long]$entry.offset, [System.IO.SeekOrigin]::Begin) | Out-Null
+
+            while ($true) {
+                $nextByte = $fs.ReadByte()
+                if ($nextByte -lt 0 -or $nextByte -eq 10) { break }
+                $lineBytes.Add([byte]$nextByte)
+            }
+
+            if ($lineBytes.Count -gt 0 -and $lineBytes[$lineBytes.Count - 1] -eq 13) {
+                $lineBytes.RemoveAt($lineBytes.Count - 1)
+            }
+
+            if ($lineBytes.Count -gt 0) {
+                $line = [System.Text.Encoding]::UTF8.GetString($lineBytes.ToArray())
                 if (-not [string]::IsNullOrWhiteSpace($line)) {
                     try { $results.Add(($line | ConvertFrom-Json)) } catch { }
                 }
             }
         } finally {
-            $sr.Dispose()
             $fs.Dispose()
         }
     }
@@ -431,8 +439,9 @@ function Get-ConversationRecord {
     $entry = $idx | Where-Object { $_.id -eq $ConversationId } | Select-Object -First 1
     if ($null -eq $entry) { return $null }
     $page = Get-IndexedPage -RunFolder $RunFolder -IndexEntries @($entry)
-    if ($page.Count -eq 0) { return $null }
-    return $page[0]
+    $records = @($page)
+    if ($records.Count -eq 0) { return $null }
+    return $records[0]
 }
 
 Export-ModuleMember -Function `
