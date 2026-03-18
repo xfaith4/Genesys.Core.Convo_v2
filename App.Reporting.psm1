@@ -34,7 +34,7 @@ function New-ImpactReport {
         Where-Object { $_.divisionIds } |
         ForEach-Object { @($_.divisionIds) } |
         Group-Object |
-        Sort-Object Count -Descending, Name |
+        Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
             [pscustomobject]@{
                 DivisionId = $_.Name
@@ -46,7 +46,7 @@ function New-ImpactReport {
         Where-Object { $_.queueIds } |
         ForEach-Object { @($_.queueIds) } |
         Group-Object |
-        Sort-Object Count -Descending, Name |
+        Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
             [pscustomobject]@{
                 QueueId = $_.Name
@@ -58,7 +58,7 @@ function New-ImpactReport {
         Where-Object { $_.userIds } |
         ForEach-Object { @($_.userIds) } |
         Group-Object |
-        Sort-Object Count -Descending, Name |
+        Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
             [pscustomobject]@{
                 AgentId = $_.Name
@@ -69,7 +69,7 @@ function New-ImpactReport {
     $directionBreakdown = $rows |
         Where-Object { $_.direction } |
         Group-Object direction |
-        Sort-Object Count -Descending, Name |
+        Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
             [pscustomobject]@{
                 Direction = $_.Name
@@ -80,7 +80,7 @@ function New-ImpactReport {
     $mediaTypeBreakdown = $rows |
         Where-Object { $_.mediaType } |
         Group-Object mediaType |
-        Sort-Object Count -Descending, Name |
+        Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
             [pscustomobject]@{
                 MediaType = $_.Name

@@ -30,7 +30,7 @@ Add-Type -AssemblyName Microsoft.Win32.Primitives  -ErrorAction SilentlyContinue
 Import-Module (Join-Path $AppDir 'App.Config.psm1')      -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'App.Auth.psm1')         -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'App.CoreAdapter.psm1')  -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'App.Index.psm1')        -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'App.Index.psm1')        -Force -ErrorAction Stop -DisableNameChecking
 Import-Module (Join-Path $AppDir 'App.Export.psm1')       -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'App.Reporting.psm1')    -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'App.Database.psm1')     -Force -ErrorAction Stop

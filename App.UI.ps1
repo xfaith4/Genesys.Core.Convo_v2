@@ -60,7 +60,7 @@ $script:TxtAttributeSearch     = _Ctrl 'TxtAttributeSearch'
 $script:DgAttributes           = _Ctrl 'DgAttributes'
 $script:TxtMosQuality          = _Ctrl 'TxtMosQuality'
 $script:TxtRawJson             = _Ctrl 'TxtRawJson'
-# BtnExpandJson exists in XAML but has no bound handler (known nuance – preserved by design)
+$script:BtnExpandJson          = _Ctrl 'BtnExpandJson'
 
 # Run Console tab
 $script:TxtConsoleStatus       = _Ctrl 'TxtConsoleStatus'
@@ -94,6 +94,11 @@ $script:State = @{
     ActiveCaseName      = ''
     CurrentImpactReport = $null
 }
+
+# Capture app directory at dot-source time for use inside background runspaces.
+# $PSScriptRoot is unreliable inside WPF event-handler closures (not executing a
+# script file), so we snapshot it here while a script IS being processed.
+$script:UIAppDir = if ($PSScriptRoot) { $PSScriptRoot } else { $AppDir }
 
 # ── Dispatcher helper ─────────────────────────────────────────────────────────
 
@@ -1091,6 +1096,9 @@ function _StartRunInBackground {
     $outputRoot  = $cfg.OutputRoot
 
     $script:State.RunCancelled = $false
+    # Clear any stale run folder so _PollBackgroundRun discovers the new one
+    $script:State.CurrentRunFolder   = $null
+    $script:State.DiagnosticsContext = $null
     _SetRunning $true
     _Dispatch {
         $script:TxtRunStatus.Text   = "Starting $RunType run…"
@@ -1107,7 +1115,7 @@ function _StartRunInBackground {
     $ps = [System.Management.Automation.PowerShell]::Create()
     $ps.Runspace = $rs
 
-    $appDir = $PSScriptRoot
+    $appDir = $script:UIAppDir
 
     [void]$ps.AddScript({
         param($AppDir, $CorePath, $CatalogPath, $SchemaPath, $OutputRoot, $RunType, $DatasetParams, $Headers)
@@ -1181,13 +1189,16 @@ function _PollBackgroundRun {
     if (-not $async.IsCompleted) { return }
 
     # Run finished
-    $script:State.PollingTimer.Stop()
-    $script:State.PollingTimer = $null
+    if ($null -ne $script:State.PollingTimer) {
+        $script:State.PollingTimer.Stop()
+        $script:State.PollingTimer = $null
+    }
 
     $errors = $ps.Streams.Error
     $endInvokeFailure = $null
+    $runResult = $null
     try {
-        $ps.EndInvoke($async) | Out-Null
+        $runResult = $ps.EndInvoke($async)
     } catch {
         $endInvokeFailure = $_
     } finally {
@@ -1200,6 +1211,16 @@ function _PollBackgroundRun {
     }
 
     _SetRunning $false
+
+    # If polling didn't detect the new run folder, try to recover it from the
+    # return value of Start-PreviewRun / Start-FullRun (the run folder path).
+    if ($null -eq $script:State.CurrentRunFolder -and $null -ne $runResult) {
+        $resultFolder = @($runResult) | Where-Object { $_ -is [string] -and [System.IO.Directory]::Exists($_) } | Select-Object -First 1
+        if ($resultFolder) {
+            $script:State.CurrentRunFolder   = $resultFolder
+            $script:State.DiagnosticsContext = $resultFolder
+        }
+    }
 
     if ($null -ne $endInvokeFailure -or $errors.Count -gt 0) {
         $errParts = @()
@@ -1240,8 +1261,10 @@ function _CancelBackgroundRun {
     if ($null -ne $job) {
         try { $job.Ps.Stop() } catch { }
     }
-    $script:State.PollingTimer.Stop()
-    $script:State.PollingTimer = $null
+    if ($null -ne $script:State.PollingTimer) {
+        try { $script:State.PollingTimer.Stop() } catch { }
+        $script:State.PollingTimer = $null
+    }
     _SetRunning $false
     _Dispatch {
         $script:TxtRunStatus.Text     = 'Run cancelled'
@@ -1342,7 +1365,7 @@ function _ShowConnectDialog {
 
         $rs2  = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace(); $rs2.Open()
         $ps2  = [System.Management.Automation.PowerShell]::Create(); $ps2.Runspace = $rs2
-        $appDir = $PSScriptRoot
+        $appDir = $script:UIAppDir
         [void]$ps2.AddScript({
             param($AppDir, $ClientId, $Region, $RedirectUri, $CancelToken)
             Import-Module (Join-Path $AppDir 'App.Auth.psm1') -Force
@@ -1643,6 +1666,16 @@ if ($null -ne $script:BtnGenerateReport) {
 
 if ($null -ne $script:BtnSaveReportSnapshot) {
     $script:BtnSaveReportSnapshot.Add_Click({ _SaveImpactReportSnapshot })
+}
+
+if ($null -ne $script:BtnExpandJson) {
+    $script:BtnExpandJson.Add_Click({
+        $json = $script:TxtRawJson.Text
+        if (-not [string]::IsNullOrEmpty($json)) {
+            [System.Windows.Clipboard]::SetText($json)
+            _SetStatus 'Raw JSON copied to clipboard'
+        }
+    })
 }
 
 $script:BtnCopyDiagnostics.Add_Click({
