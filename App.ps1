@@ -35,6 +35,140 @@ Import-Module (Join-Path $AppDir 'App.Export.psm1')       -Force -ErrorAction St
 Import-Module (Join-Path $AppDir 'App.Reporting.psm1')    -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'App.Database.psm1')     -Force -ErrorAction Stop
 
+# ── Bootstrap: auto-clone Genesys.Core if it has never been set up ───────────
+#
+# Clones from GitHub into the sibling directory, then updates $corePath /
+# $catalogPath / $schemaPath via [ref] params and saves the resolved paths to
+# config so the bootstrap never runs again on this machine.
+#
+# Falls back to a ZIP download when git is not installed.
+
+function _InvokeCoreBootstrap {
+    param(
+        [string]$SiblingRoot,
+        [string]$RepoUrl,
+        [ref]$CorePath,
+        [ref]$CatalogPath,
+        [ref]$SchemaPath
+    )
+
+    $confirmMsg = "Genesys.Core was not found at the expected location.`n`n" +
+                  "The app can clone it automatically from GitHub.`n`n" +
+                  "  Repository : $RepoUrl`n" +
+                  "  Destination: $SiblingRoot`n`n" +
+                  "Clone now?"
+
+    $r = [System.Windows.MessageBox]::Show(
+        $confirmMsg, 'Genesys.Core – First-Time Setup',
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question)
+    if ($r -ne [System.Windows.MessageBoxResult]::Yes) { return $false }
+
+    # ── Progress window ───────────────────────────────────────────────────────
+    $wnd = New-Object System.Windows.Window
+    $wnd.Title  = 'Genesys.Core – Setting Up…'
+    $wnd.Width  = 440; $wnd.Height = 110
+    $wnd.WindowStartupLocation = 'CenterScreen'
+    $wnd.ResizeMode  = 'NoResize'
+    $wnd.WindowStyle = 'ToolWindow'
+
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.VerticalAlignment   = 'Center'
+    $panel.HorizontalAlignment = 'Center'
+    $panel.Margin = [System.Windows.Thickness]::new(20)
+
+    $lbl1 = New-Object System.Windows.Controls.TextBlock
+    $lbl1.Text = 'Cloning Genesys.Core from GitHub…  please wait.'
+    $lbl1.HorizontalAlignment = 'Center'
+
+    $lbl2 = New-Object System.Windows.Controls.TextBlock
+    $lbl2.Text = $RepoUrl
+    $lbl2.HorizontalAlignment = 'Center'
+    $lbl2.FontSize  = 10
+    $lbl2.Foreground = [System.Windows.Media.Brushes]::Gray
+    $lbl2.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+
+    $panel.Children.Add($lbl1) | Out-Null
+    $panel.Children.Add($lbl2) | Out-Null
+    $wnd.Content = $panel
+
+    # ── Clone in a background runspace ────────────────────────────────────────
+    $useGit = $null -ne (Get-Command 'git' -ErrorAction SilentlyContinue)
+
+    $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $rs.Open()
+    $ps = [System.Management.Automation.PowerShell]::Create()
+    $ps.Runspace = $rs
+
+    if ($useGit) {
+        $ps.AddScript({
+            param($url, $dest)
+            $out = & git clone $url $dest 2>&1
+            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($out -join "`n") }
+        }).AddArgument($RepoUrl).AddArgument($SiblingRoot) | Out-Null
+    } else {
+        $ps.AddScript({
+            param($url, $dest)
+            $zipUrl = ($url -replace '\.git$', '') + '/archive/refs/heads/main.zip'
+            $tmpZip = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'GenesysCore_bootstrap.zip')
+            $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'GenesysCore_extract')
+            try {
+                (New-Object System.Net.WebClient).DownloadFile($zipUrl, $tmpZip)
+                if ([System.IO.Directory]::Exists($tmpDir)) { [System.IO.Directory]::Delete($tmpDir, $true) }
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $tmpDir)
+                $extracted = [System.IO.Directory]::GetDirectories($tmpDir)[0]
+                if ([System.IO.Directory]::Exists($dest)) { [System.IO.Directory]::Delete($dest, $true) }
+                [System.IO.Directory]::Move($extracted, $dest)
+                [pscustomobject]@{ ExitCode = 0; Output = 'Downloaded and extracted.' }
+            } catch {
+                [pscustomobject]@{ ExitCode = 1; Output = [string]$_ }
+            } finally {
+                Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+                Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }).AddArgument($RepoUrl).AddArgument($SiblingRoot) | Out-Null
+    }
+
+    $asyncJob = $ps.BeginInvoke()
+
+    # DispatcherTimer closes the progress window when the job finishes.
+    # ShowDialog() runs its own message loop so the timer fires correctly.
+    $script:_bootstrapResult = $null
+    $capturedJob = $asyncJob; $capturedPs = $ps; $capturedWnd = $wnd
+
+    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer.Interval = [System.TimeSpan]::FromMilliseconds(400)
+    $timer.Add_Tick({
+        if ($capturedJob.IsCompleted) {
+            $timer.Stop()
+            $script:_bootstrapResult = $capturedPs.EndInvoke($capturedJob)
+            $capturedWnd.Close()
+        }
+    })
+    $timer.Start()
+    $wnd.ShowDialog() | Out-Null
+
+    $rs.Close(); $rs.Dispose()
+    $result = $script:_bootstrapResult
+    $script:_bootstrapResult = $null
+
+    if ($null -eq $result -or $result.ExitCode -ne 0) {
+        $detail = if ($null -ne $result) { $result.Output } else { 'Unknown error.' }
+        [System.Windows.MessageBox]::Show(
+            "Could not set up Genesys.Core:`n`n$detail`n`nYou can configure paths manually via Settings.",
+            'Genesys.Core Setup – Failed',
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return $false
+    }
+
+    $CorePath.Value    = [System.IO.Path]::Combine($SiblingRoot, 'modules', 'Genesys.Core', 'Genesys.Core.psd1')
+    $CatalogPath.Value = [System.IO.Path]::Combine($SiblingRoot, 'catalog', 'genesys.catalog.json')
+    $SchemaPath.Value  = [System.IO.Path]::Combine($SiblingRoot, 'catalog', 'schema', 'genesys.catalog.schema.json')
+    return $true
+}
+
 # ── 3. Resolve Core paths (env overrides take precedence) ────────────────────
 $cfg = Get-AppConfig
 
@@ -42,6 +176,32 @@ $corePath    = if ($env:GENESYS_CORE_MODULE)  { $env:GENESYS_CORE_MODULE  } else
 $catalogPath = if ($env:GENESYS_CORE_CATALOG) { $env:GENESYS_CORE_CATALOG } else { $cfg.CatalogPath    }
 $schemaPath  = if ($env:GENESYS_CORE_SCHEMA)  { $env:GENESYS_CORE_SCHEMA  } else { $cfg.SchemaPath     }
 $outputRoot  = $cfg.OutputRoot
+
+# ── 3b. Bootstrap: clone Genesys.Core if module file is missing ──────────────
+# Triggers only when: (a) the resolved module file does not exist AND
+#                     (b) the sibling Genesys.Core directory does not exist.
+# If the sibling already exists but the path is wrong, Gate A will fail and
+# the user can fix via Settings → Browse.
+if (-not [System.IO.File]::Exists($corePath)) {
+    $siblingRoot = Get-CoreSiblingRoot
+    if (-not [System.IO.Directory]::Exists($siblingRoot)) {
+        $bootstrapped = _InvokeCoreBootstrap `
+            -SiblingRoot $siblingRoot `
+            -RepoUrl     'https://github.com/xfaith4/Genesys.Core.git' `
+            -CorePath    ([ref]$corePath) `
+            -CatalogPath ([ref]$catalogPath) `
+            -SchemaPath  ([ref]$schemaPath)
+
+        if ($bootstrapped) {
+            # Persist the resolved paths so this never runs again on this machine
+            $cfgB = Get-AppConfig
+            $cfgB | Add-Member -NotePropertyName 'CoreModulePath' -NotePropertyValue $corePath    -Force
+            $cfgB | Add-Member -NotePropertyName 'CatalogPath'    -NotePropertyValue $catalogPath -Force
+            $cfgB | Add-Member -NotePropertyName 'SchemaPath'     -NotePropertyValue $schemaPath  -Force
+            Save-AppConfig -Config $cfgB
+        }
+    }
+}
 
 # ── 4. Gate A: Initialize CoreAdapter (non-fatal – user can fix via Settings) ─
 $script:CoreInitError = ''

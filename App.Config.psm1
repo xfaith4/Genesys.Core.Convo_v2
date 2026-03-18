@@ -5,9 +5,12 @@ $script:AppDir     = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $script:ConfigDir  = [System.IO.Path]::Combine($env:LOCALAPPDATA, 'GenesysConversationAnalysis')
 $script:ConfigFile = [System.IO.Path]::Combine($script:ConfigDir, 'config.json')
 
-$script:DefaultCoreModulePath = 'G:\Development\20_Staging\GenesysCloud\Genesys.Core\modules\Genesys.Core\Genesys.Core.psd1'
-$script:DefaultCatalogPath    = 'G:\Development\20_Staging\GenesysCloud\Genesys.Core\catalog\genesys.catalog.json'
-$script:DefaultSchemaPath     = 'G:\Development\20_Staging\GenesysCloud\Genesys.Core\catalog\schema\genesys.catalog.schema.json'
+# Sibling layout: <workspace>/Genesys.Core/ lives next to the app directory.
+# Computed at import time so defaults are correct on any machine.
+$script:_CoreSiblingRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'Genesys.Core'))
+$script:DefaultCoreModulePath = [System.IO.Path]::Combine($script:_CoreSiblingRoot, 'modules', 'Genesys.Core', 'Genesys.Core.psd1')
+$script:DefaultCatalogPath    = [System.IO.Path]::Combine($script:_CoreSiblingRoot, 'catalog', 'genesys.catalog.json')
+$script:DefaultSchemaPath     = [System.IO.Path]::Combine($script:_CoreSiblingRoot, 'catalog', 'schema', 'genesys.catalog.schema.json')
 
 $script:LegacyCoreModuleSuffix = [string]([System.IO.Path]::Combine('Genesys.Core', 'modules', 'Genesys.Core', 'Genesys.Core.psd1'))
 $script:LegacyCatalogSuffix    = [string]([System.IO.Path]::Combine('Genesys.Core', 'catalog', 'genesys.catalog.json'))
@@ -254,4 +257,12 @@ function Get-RecentRuns {
     return @($cfg.RecentRuns)
 }
 
-Export-ModuleMember -Function Get-AppConfig, Save-AppConfig, Update-AppConfig, Add-RecentRun, Get-RecentRuns
+function Get-CoreSiblingRoot {
+    <#
+    .SYNOPSIS
+        Returns the expected sibling Genesys.Core directory (used by the bootstrap).
+    #>
+    return $script:_CoreSiblingRoot
+}
+
+Export-ModuleMember -Function Get-AppConfig, Save-AppConfig, Update-AppConfig, Add-RecentRun, Get-RecentRuns, Get-CoreSiblingRoot
