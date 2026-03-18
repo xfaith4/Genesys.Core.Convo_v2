@@ -148,8 +148,16 @@ function _RefreshRecentRuns {
     $cfg         = Get-AppConfig
     $fromConfig  = @(Get-RecentRuns)
     $fromDisk    = @(Get-RecentRunFolders -OutputRoot $cfg.OutputRoot -Max $cfg.MaxRecentRuns)
-    # Merge and deduplicate; config list takes precedence for ordering
-    $combined    = ($fromConfig + $fromDisk) | Select-Object -Unique
+    # Merge and deduplicate; config list takes precedence for ordering.
+    # Use OrdinalIgnoreCase so C:\Foo and c:\foo are treated as the same path
+    # (Select-Object -Unique does a case-sensitive comparison on Windows).
+    $seen     = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $combined = ($fromConfig + $fromDisk) | Where-Object {
+        if ([string]::IsNullOrWhiteSpace([string]$_)) { return $false }
+        try   { $key = [System.IO.Path]::GetFullPath([string]$_) }
+        catch { $key = [string]$_ }
+        $seen.Add($key)
+    }
     _Dispatch {
         $script:LstRecentRuns.Items.Clear()
         foreach ($f in $combined) {
@@ -985,8 +993,14 @@ function _LoadRunAndRefreshGrid {
     if ([string]::IsNullOrEmpty($RunFolder)) { return }
     _SetStatus "Loading index: $([System.IO.Path]::GetFileName($RunFolder)) …"
 
-    $script:State.CurrentRunFolder = $RunFolder
+    $script:State.CurrentRunFolder  = $RunFolder
     $script:State.DiagnosticsContext = $RunFolder
+
+    # Clear run-specific ID filters – stale values from a prior run would silently
+    # filter the newly-loaded data and confuse the user.
+    $script:TxtConversationId.Text = ''
+    if ($null -ne $script:TxtFilterUserId)     { $script:TxtFilterUserId.Text     = '' }
+    if ($null -ne $script:TxtFilterDivisionId) { $script:TxtFilterDivisionId.Text = '' }
 
     # Load or build index (may take a moment for large runs)
     $allIdx = Load-RunIndex -RunFolder $RunFolder
@@ -1584,12 +1598,17 @@ function _ShowConnectDialog {
             $pkceTimer.Stop()
             try {
                 $ps2.EndInvoke($ar2) | Out-Null
-                $rs2.Close()
                 _UpdateConnectionStatus
                 Update-AppConfig -Key 'Region' -Value $region
                 _SetStatus "Connected via PKCE ($region)"
             } catch {
                 [System.Windows.MessageBox]::Show("PKCE login failed: $_", 'Error')
+            } finally {
+                try { $rs2.Close()   } catch { }
+                try { $rs2.Dispose() } catch { }
+                try { $ps2.Dispose() } catch { }
+                try { $cts.Dispose() } catch { }
+                $script:State.PkceCancel = $null
             }
         })
         $pkceTimer.Start()

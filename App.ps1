@@ -117,7 +117,11 @@ function _InvokeCoreBootstrap {
                 if ([System.IO.Directory]::Exists($tmpDir)) { [System.IO.Directory]::Delete($tmpDir, $true) }
                 Add-Type -AssemblyName System.IO.Compression.FileSystem
                 [System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $tmpDir)
-                $extracted = [System.IO.Directory]::GetDirectories($tmpDir)[0]
+                $dirs = [System.IO.Directory]::GetDirectories($tmpDir)
+                if ($dirs.Count -eq 0) {
+                    throw 'Archive appears empty – no subdirectory found after extraction.'
+                }
+                $extracted = $dirs[0]
                 if ([System.IO.Directory]::Exists($dest)) { [System.IO.Directory]::Delete($dest, $true) }
                 [System.IO.Directory]::Move($extracted, $dest)
                 [pscustomobject]@{ ExitCode = 0; Output = 'Downloaded and extracted.' }
@@ -134,12 +138,25 @@ function _InvokeCoreBootstrap {
 
     # DispatcherTimer closes the progress window when the job finishes.
     # ShowDialog() runs its own message loop so the timer fires correctly.
+    # A 10-minute hard timeout prevents the dialog hanging if the network stalls.
     $script:_bootstrapResult = $null
-    $capturedJob = $asyncJob; $capturedPs = $ps; $capturedWnd = $wnd
+    $capturedJob     = $asyncJob
+    $capturedPs      = $ps
+    $capturedWnd     = $wnd
+    $capturedTimeout = [datetime]::UtcNow.AddMinutes(10)
 
     $timer = New-Object System.Windows.Threading.DispatcherTimer
     $timer.Interval = [System.TimeSpan]::FromMilliseconds(400)
     $timer.Add_Tick({
+        if ([datetime]::UtcNow -gt $capturedTimeout) {
+            $timer.Stop()
+            $script:_bootstrapResult = [pscustomobject]@{
+                ExitCode = 1
+                Output   = 'Timed out after 10 minutes. Check your network connection.'
+            }
+            $capturedWnd.Close()
+            return
+        }
         if ($capturedJob.IsCompleted) {
             $timer.Stop()
             $script:_bootstrapResult = $capturedPs.EndInvoke($capturedJob)
@@ -149,7 +166,9 @@ function _InvokeCoreBootstrap {
     $timer.Start()
     $wnd.ShowDialog() | Out-Null
 
-    $rs.Close(); $rs.Dispose()
+    try { $rs.Close()   } catch { }
+    try { $rs.Dispose() } catch { }
+    try { $ps.Dispose() } catch { }
     $result = $script:_bootstrapResult
     $script:_bootstrapResult = $null
 
@@ -265,6 +284,13 @@ $script:Window.Add_Closing({
     # Stop polling timer
     if ($null -ne $script:State.PollingTimer) {
         try { $script:State.PollingTimer.Stop() } catch { }
+    }
+
+    # Cancel any in-progress PKCE auth flow
+    if ($null -ne $script:State.PkceCancel) {
+        try { $script:State.PkceCancel.Cancel()  } catch { }
+        try { $script:State.PkceCancel.Dispose() } catch { }
+        $script:State.PkceCancel = $null
     }
 
     # Stop background runspace
