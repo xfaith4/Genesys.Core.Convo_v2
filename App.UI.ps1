@@ -1467,10 +1467,19 @@ function _PollBackgroundRun {
 function _CancelBackgroundRun {
     if (-not $script:State.IsRunning) { return }
     $script:State.RunCancelled = $true
+
     $job = $script:State.BackgroundRunJob
     if ($null -ne $job) {
-        try { $job.Ps.Stop() } catch { }
+        try { $job.Ps.Stop()    } catch { }
+        try { $job.Ps.Dispose() } catch { }
     }
+    if ($null -ne $script:State.BackgroundRunspace) {
+        try { $script:State.BackgroundRunspace.Close()   } catch { }
+        try { $script:State.BackgroundRunspace.Dispose() } catch { }
+    }
+    $script:State.BackgroundRunJob   = $null
+    $script:State.BackgroundRunspace = $null
+
     if ($null -ne $script:State.PollingTimer) {
         try { $script:State.PollingTimer.Stop() } catch { }
         $script:State.PollingTimer = $null

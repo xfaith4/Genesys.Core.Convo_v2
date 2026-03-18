@@ -113,12 +113,18 @@ function Connect-GenesysCloudPkce {
 
     # Build PKCE verifier + challenge
     $verifierBytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($verifierBytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try   { $rng.GetBytes($verifierBytes) }
+    finally { $rng.Dispose() }
     $verifier = [System.Convert]::ToBase64String($verifierBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 
-    $sha256         = [System.Security.Cryptography.SHA256]::Create()
-    $challengeBytes = $sha256.ComputeHash([System.Text.Encoding]::ASCII.GetBytes($verifier))
-    $challenge      = [System.Convert]::ToBase64String($challengeBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $challengeBytes = $sha256.ComputeHash([System.Text.Encoding]::ASCII.GetBytes($verifier))
+    } finally {
+        $sha256.Dispose()
+    }
+    $challenge = [System.Convert]::ToBase64String($challengeBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 
     $state   = [System.Guid]::NewGuid().ToString('N')
     $authUrl = "https://login.$($Region)/oauth/authorize" +
@@ -166,6 +172,7 @@ function Connect-GenesysCloudPkce {
         }
     } finally {
         $listener.Stop()
+        $listener.Dispose()
     }
 
     if (-not $code) { throw 'PKCE authorization was cancelled or did not return a code.' }
