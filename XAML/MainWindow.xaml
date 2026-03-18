@@ -636,6 +636,18 @@
 
                                         <TextBlock Text="Queue (contains)" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
                                         <TextBox x:Name="TxtQueue" Style="{StaticResource TxtBase}" Height="30"/>
+
+                                        <TextBlock Text="Conversation ID" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
+                                        <TextBox x:Name="TxtConversationId" Style="{StaticResource TxtBase}" Height="30"
+                                                 ToolTip="Exact conversation GUID — returns only this conversation"/>
+
+                                        <TextBlock Text="User / Agent ID" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
+                                        <TextBox x:Name="TxtFilterUserId" Style="{StaticResource TxtBase}" Height="30"
+                                                 ToolTip="Filter to conversations where this user GUID appears as a participant"/>
+
+                                        <TextBlock Text="Division ID" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
+                                        <TextBox x:Name="TxtFilterDivisionId" Style="{StaticResource TxtBase}" Height="30"
+                                                 ToolTip="Restrict query to this Genesys division GUID"/>
                                     </StackPanel>
                                 </Border>
 

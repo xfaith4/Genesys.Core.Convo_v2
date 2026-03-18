@@ -24,6 +24,9 @@ $script:TxtEndTime             = _Ctrl 'TxtEndTime'
 $script:CmbDirection           = _Ctrl 'CmbDirection'
 $script:CmbMediaType           = _Ctrl 'CmbMediaType'
 $script:TxtQueue               = _Ctrl 'TxtQueue'
+$script:TxtConversationId      = _Ctrl 'TxtConversationId'
+$script:TxtFilterUserId        = _Ctrl 'TxtFilterUserId'
+$script:TxtFilterDivisionId    = _Ctrl 'TxtFilterDivisionId'
 $script:TxtPreviewPageSize     = _Ctrl 'TxtPreviewPageSize'
 $script:BtnPreviewRun          = _Ctrl 'BtnPreviewRun'
 $script:BtnRun                 = _Ctrl 'BtnRun'
@@ -87,6 +90,8 @@ $script:State = @{
     FilterMedia         = ''
     FilterDisconnect    = ''           # disconnect-type pivot filter (DB mode only)
     FilterAgent         = ''           # agent user-ID filter (DB mode only)
+    FilterUserId        = ''           # user/agent GUID pre-query filter (SHAPE SIGNAL)
+    FilterDivisionId    = ''           # division GUID pre-query filter (SHAPE SIGNAL)
     DataSource          = 'index'      # 'index' (JSONL) | 'database' (SQLite case store)
     DbConversationCount = 0            # total filtered count in DB mode
     BackgroundRunJob    = $null        # PSDataCollection / runspace handle
@@ -873,11 +878,16 @@ function _RefreshGridFromDb {
         return
     }
 
-    $dir   = $script:State.FilterDirection
-    $media = $script:State.FilterMedia
-    $disc  = $script:State.FilterDisconnect
-    $agent = $script:State.FilterAgent
-    $srch  = $script:State.SearchText
+    $dir    = $script:State.FilterDirection
+    $media  = $script:State.FilterMedia
+    $disc   = $script:State.FilterDisconnect
+    $agent  = $script:State.FilterAgent
+    $srch   = $script:State.SearchText
+    $divId  = $script:TxtFilterDivisionId.Text.Trim()
+    # Conversation ID entered in SHAPE SIGNAL acts as a SearchText override when no
+    # explicit grid search is active (DB SearchText already does LIKE on conversation_id).
+    $convId = $script:TxtConversationId.Text.Trim()
+    if ($convId -and -not $srch) { $srch = $convId }
 
     # Resolve date/time range – silently skip if pickers are unset or invalid
     $startDt = ''
@@ -896,6 +906,7 @@ function _RefreshGridFromDb {
             -SearchText     $srch `
             -DisconnectType $disc `
             -AgentName      $agent `
+            -DivisionId     $divId `
             -StartDateTime  $startDt `
             -EndDateTime    $endDt
 
@@ -914,6 +925,7 @@ function _RefreshGridFromDb {
             -SearchText     $srch `
             -DisconnectType $disc `
             -AgentName      $agent `
+            -DivisionId     $divId `
             -StartDateTime  $startDt `
             -EndDateTime    $endDt)
 
@@ -985,16 +997,22 @@ function _ApplyFiltersAndRefresh {
     $dir    = $script:State.FilterDirection
     $media  = $script:State.FilterMedia
     $search = $script:State.SearchText
+    $convId = $script:TxtConversationId.Text.Trim()
+    $userId = $script:TxtFilterUserId.Text.Trim()
+    $divId  = $script:TxtFilterDivisionId.Text.Trim()
 
     $filtered = $AllIndex | Where-Object {
         $ok = $true
-        if ($dir    -and $_.direction -ne $dir)          { $ok = $false }
-        if ($media  -and $_.mediaType -ne $media)         { $ok = $false }
+        if ($dir    -and $_.direction -ne $dir)   { $ok = $false }
+        if ($media  -and $_.mediaType -ne $media) { $ok = $false }
+        if ($convId -and $_.id -ne $convId)       { $ok = $false }
         if ($search) {
             $lo = $search.ToLowerInvariant()
             if ($_.id    -notlike "*$lo*" -and
                 $_.queue -notlike "*$lo*") { $ok = $false }
         }
+        if ($userId -and -not (@($_.userIds)     -contains $userId)) { $ok = $false }
+        if ($divId  -and -not (@($_.divisionIds) -contains $divId))  { $ok = $false }
         $ok
     }
     $script:State.CurrentIndex = @($filtered)
@@ -1209,6 +1227,15 @@ function _GetDatasetParameters {
 
     $q = $script:TxtQueue.Text.Trim()
     if ($q) { $params['Queue'] = $q }
+
+    $convId = $script:TxtConversationId.Text.Trim()
+    if ($convId) { $params['ConversationId'] = $convId }
+
+    $userId = $script:TxtFilterUserId.Text.Trim()
+    if ($userId) { $params['UserId'] = $userId }
+
+    $divId = $script:TxtFilterDivisionId.Text.Trim()
+    if ($divId) { $params['DivisionId'] = $divId }
 
     return $params
 }

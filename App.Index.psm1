@@ -339,26 +339,38 @@ function Get-FilteredIndex {
         Filter by queue name (substring, case-insensitive; '' for all).
     .PARAMETER SearchText
         Substring match against conversationId or queue (case-insensitive; '' for all).
+    .PARAMETER ConversationId
+        Exact match against conversationId ('' for all).
+    .PARAMETER UserId
+        Exact match against any entry in the userIds array ('' for all).
+    .PARAMETER DivisionId
+        Exact match against any entry in the divisionIds array ('' for all).
     #>
     param(
         [Parameter(Mandatory)][string]$RunFolder,
-        [string]$Direction  = '',
-        [string]$MediaType  = '',
-        [string]$Queue      = '',
-        [string]$SearchText = ''
+        [string]$Direction      = '',
+        [string]$MediaType      = '',
+        [string]$Queue          = '',
+        [string]$SearchText     = '',
+        [string]$ConversationId = '',
+        [string]$UserId         = '',
+        [string]$DivisionId     = ''
     )
     $idx = Load-RunIndex -RunFolder $RunFolder
 
     $filtered = $idx | Where-Object {
         $ok = $true
-        if ($Direction  -and $_.direction -ne $Direction) { $ok = $false }
-        if ($MediaType  -and $_.mediaType -ne $MediaType) { $ok = $false }
-        if ($Queue      -and $_.queue -notlike "*$Queue*")  { $ok = $false }
+        if ($Direction      -and $_.direction -ne $Direction)                         { $ok = $false }
+        if ($MediaType      -and $_.mediaType -ne $MediaType)                         { $ok = $false }
+        if ($Queue          -and $_.queue -notlike "*$Queue*")                        { $ok = $false }
+        if ($ConversationId -and $_.id -ne $ConversationId)                           { $ok = $false }
         if ($SearchText) {
             $lo = $SearchText.ToLowerInvariant()
             if ($_.id    -notlike "*$lo*" -and
                 $_.queue -notlike "*$lo*") { $ok = $false }
         }
+        if ($UserId     -and -not (@($_.userIds)     -contains $UserId))    { $ok = $false }
+        if ($DivisionId -and -not (@($_.divisionIds) -contains $DivisionId)) { $ok = $false }
         $ok
     }
     return @($filtered)
