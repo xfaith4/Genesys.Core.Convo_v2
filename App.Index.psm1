@@ -137,11 +137,16 @@ function _ExtractIndexMetadata {
     $segmentCount = 0
     $partCount    = 0
     $durationSec  = 0
+    $queueIds     = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $userIds      = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
     if ($Record.PSObject.Properties['participants']) {
         $partCount = @($Record.participants).Count
         foreach ($p in @($Record.participants)) {
             $isCustomer = ($p.PSObject.Properties['purpose'] -and $p.purpose -eq 'customer')
+            if ($p.PSObject.Properties['userId'] -and $p.userId) {
+                $userIds.Add([string]$p.userId) | Out-Null
+            }
             if (-not $p.PSObject.Properties['sessions']) { continue }
             foreach ($s in @($p.sessions)) {
                 if (-not $mediaType -and $s.PSObject.Properties['mediaType']) {
@@ -170,6 +175,9 @@ function _ExtractIndexMetadata {
                     if (-not $queue -and $seg.PSObject.Properties['queueName']) {
                         $queue = $seg.queueName
                     }
+                    if ($seg.PSObject.Properties['queueId'] -and $seg.queueId) {
+                        $queueIds.Add([string]$seg.queueId) | Out-Null
+                    }
                 }
             }
         }
@@ -184,7 +192,11 @@ function _ExtractIndexMetadata {
         } catch { }
     }
 
-    $convId = if ($Record.PSObject.Properties['conversationId']) { $Record.conversationId } else { '' }
+    $convId    = if ($Record.PSObject.Properties['conversationId'])    { $Record.conversationId }    else { '' }
+    $convStart = if ($Record.PSObject.Properties['conversationStart']) { $Record.conversationStart } else { '' }
+    $divIds    = @(if ($Record.PSObject.Properties['divisionIds'] -and $null -ne $Record.divisionIds) {
+        @($Record.divisionIds) | Where-Object { $_ }
+    })
 
     return [pscustomobject]@{
         id               = $convId
@@ -199,6 +211,10 @@ function _ExtractIndexMetadata {
         segmentCount     = $segmentCount
         participantCount = $partCount
         durationSec      = $durationSec
+        conversationStart = $convStart
+        divisionIds      = $divIds
+        queueIds         = @($queueIds)
+        userIds          = @($userIds)
     }
 }
 

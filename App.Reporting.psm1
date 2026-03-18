@@ -30,8 +30,13 @@ function New-ImpactReport {
         }
     }
 
+    # Guard every property that may be absent on older index entries (pre-v2 index.jsonl
+    # files do not contain divisionIds / queueIds / userIds / conversationStart).
+    # With Set-StrictMode -Version Latest, accessing a missing property throws;
+    # the PSObject.Properties check prevents that.
+
     $impactByDivision = $rows |
-        Where-Object { $_.divisionIds } |
+        Where-Object { $_.PSObject.Properties['divisionIds'] -and @($_.divisionIds).Count -gt 0 } |
         ForEach-Object { @($_.divisionIds) } |
         Group-Object |
         Sort-Object @{Expression='Count';Descending=$true}, Name |
@@ -43,7 +48,7 @@ function New-ImpactReport {
         }
 
     $impactByQueue = $rows |
-        Where-Object { $_.queueIds } |
+        Where-Object { $_.PSObject.Properties['queueIds'] -and @($_.queueIds).Count -gt 0 } |
         ForEach-Object { @($_.queueIds) } |
         Group-Object |
         Sort-Object @{Expression='Count';Descending=$true}, Name |
@@ -55,7 +60,7 @@ function New-ImpactReport {
         }
 
     $affectedAgents = $rows |
-        Where-Object { $_.userIds } |
+        Where-Object { $_.PSObject.Properties['userIds'] -and @($_.userIds).Count -gt 0 } |
         ForEach-Object { @($_.userIds) } |
         Group-Object |
         Sort-Object @{Expression='Count';Descending=$true}, Name |
@@ -67,7 +72,7 @@ function New-ImpactReport {
         }
 
     $directionBreakdown = $rows |
-        Where-Object { $_.direction } |
+        Where-Object { $_.PSObject.Properties['direction'] -and $_.direction } |
         Group-Object direction |
         Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
@@ -78,7 +83,7 @@ function New-ImpactReport {
         }
 
     $mediaTypeBreakdown = $rows |
-        Where-Object { $_.mediaType } |
+        Where-Object { $_.PSObject.Properties['mediaType'] -and $_.mediaType } |
         Group-Object mediaType |
         Sort-Object @{Expression='Count';Descending=$true}, Name |
         ForEach-Object {
@@ -89,7 +94,7 @@ function New-ImpactReport {
         }
 
     $conversationStarts = $rows |
-        Where-Object { $_.conversationStart } |
+        Where-Object { $_.PSObject.Properties['conversationStart'] -and $_.conversationStart } |
         ForEach-Object {
             try { [datetime]::Parse([string]$_.conversationStart) } catch { $null }
         } |

@@ -1039,10 +1039,12 @@ function _GetDatasetParameters {
     $range  = _GetQueryBoundaryDateTimes
 
     if ($null -ne $range.Start) {
-        $params['StartDateTime'] = $range.Start.ToString('o')
+        # Convert to UTC – WPF DatePicker yields DateTimeKind.Unspecified (treated as
+        # local by ToUniversalTime).  The Genesys API expects UTC ISO-8601 timestamps.
+        $params['StartDateTime'] = $range.Start.ToUniversalTime().ToString('o')
     }
     if ($null -ne $range.End) {
-        $params['EndDateTime'] = $range.End.ToString('o')
+        $params['EndDateTime'] = $range.End.ToUniversalTime().ToString('o')
     }
 
     $selDir = $script:CmbDirection.SelectedItem
