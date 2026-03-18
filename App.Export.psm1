@@ -270,6 +270,41 @@ function Export-ConversationToJson {
     [System.IO.File]::WriteAllText($OutputPath, $json, [System.Text.Encoding]::UTF8)
 }
 
+function Get-DbConversationDisplayRow {
+    <#
+    .SYNOPSIS
+        Returns a lightweight display object from a SQLite conversations-table row (DataGrid binding).
+        Maps snake_case DB column names to the same PascalCase shape as Get-ConversationDisplayRow.
+    #>
+    param([Parameter(Mandatory)][object]$DbRow)
+
+    $get = {
+        param([string]$k, $d = '')
+        if ($DbRow -is [hashtable]) {
+            $v = $DbRow[$k]
+        } else {
+            $prop = $DbRow.PSObject.Properties[$k]
+            $v    = if ($null -ne $prop) { $prop.Value } else { $null }
+        }
+        if ($null -eq $v) { return $d } else { return $v }
+    }
+
+    return [pscustomobject]@{
+        ConversationId    = (& $get 'conversation_id'    '')
+        Direction         = (& $get 'direction'          '')
+        MediaType         = (& $get 'media_type'         '')
+        Queue             = (& $get 'queue_name'         '')
+        Disconnect        = (& $get 'disconnect_type'    '')
+        DurationSec       = [int]  (& $get 'duration_sec'      0)
+        HasHold           = [bool] ([int](& $get 'has_hold'     0))
+        HasMos            = [bool] ([int](& $get 'has_mos'      0))
+        SegmentCount      = [int]  (& $get 'segment_count'      0)
+        ParticipantCount  = [int]  (& $get 'participant_count'  0)
+        AgentNames        = (& $get 'agent_names'        '')
+        ConversationStart = (& $get 'conversation_start' '')
+    }
+}
+
 Export-ModuleMember -Function `
     ConvertTo-FlatRow, Export-PageToCsv, Export-RunToCsv, `
-    Export-ConversationToJson, Get-ConversationDisplayRow
+    Export-ConversationToJson, Get-ConversationDisplayRow, Get-DbConversationDisplayRow

@@ -633,8 +633,10 @@
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="128"/>
-                                                    <ColumnDefinition Width="128"/>
+                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="130"/>
                                                     <ColumnDefinition Width="8"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="Auto"/>
@@ -642,7 +644,7 @@
 
                                                 <TextBox x:Name="TxtSearch" Grid.Column="0"
                                                          Style="{StaticResource TxtBase}" Height="30"
-                                                         ToolTip="Search by conversation ID or queue"
+                                                         ToolTip="Search by conversation ID, queue, or agent"
                                                          Margin="0,0,6,0"/>
                                                 <Button x:Name="BtnSearch" Grid.Column="1"
                                                         Content="Search"
@@ -655,16 +657,31 @@
                                                     <ComboBoxItem Content="outbound"/>
                                                 </ComboBox>
                                                 <ComboBox x:Name="CmbFilterMedia" Grid.Column="3"
-                                                          Style="{StaticResource CmbBase}" Height="30" Margin="0,0,10,0">
+                                                          Style="{StaticResource CmbBase}" Height="30" Margin="0,0,6,0">
                                                     <ComboBoxItem Content="All media" IsSelected="True"/>
                                                     <ComboBoxItem Content="voice"/>
                                                     <ComboBoxItem Content="chat"/>
                                                     <ComboBoxItem Content="email"/>
                                                 </ComboBox>
-                                                <Button x:Name="BtnExportPageCsv" Grid.Column="5"
+                                                <ComboBox x:Name="CmbFilterDisconnect" Grid.Column="4"
+                                                          Style="{StaticResource CmbBase}" Height="30" Margin="0,0,6,0"
+                                                          ToolTip="Filter by disconnect type (case store only)">
+                                                    <ComboBoxItem Content="All disconnects" IsSelected="True"/>
+                                                    <ComboBoxItem Content="client"/>
+                                                    <ComboBoxItem Content="peer"/>
+                                                    <ComboBoxItem Content="system"/>
+                                                    <ComboBoxItem Content="transfer"/>
+                                                    <ComboBoxItem Content="timeout"/>
+                                                    <ComboBoxItem Content="error"/>
+                                                </ComboBox>
+                                                <TextBox x:Name="TxtFilterAgent" Grid.Column="5"
+                                                         Style="{StaticResource TxtBase}" Height="30"
+                                                         ToolTip="Filter by agent user ID (case store only — press Enter)"
+                                                         Margin="0,0,10,0"/>
+                                                <Button x:Name="BtnExportPageCsv" Grid.Column="7"
                                                         Content="Export Page"
                                                         Style="{StaticResource BtnBase}" Height="30" Margin="0,0,6,0"/>
-                                                <Button x:Name="BtnExportRunCsv" Grid.Column="6"
+                                                <Button x:Name="BtnExportRunCsv" Grid.Column="8"
                                                         Content="Export Full Run"
                                                         Style="{StaticResource BtnBase}" Height="30"/>
                                             </Grid>
@@ -682,9 +699,10 @@
                                                 <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" Width="240"/>
                                                 <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80"/>
                                                 <DataGridTextColumn Header="Media" Binding="{Binding MediaType}" Width="70"/>
-                                                <DataGridTextColumn Header="Queue" Binding="{Binding Queue}" Width="180"/>
+                                                <DataGridTextColumn Header="Queue" Binding="{Binding Queue}" Width="170"/>
+                                                <DataGridTextColumn Header="Agents" Binding="{Binding AgentNames}" Width="140"/>
                                                 <DataGridTextColumn Header="Duration (s)" Binding="{Binding DurationSec}" Width="80"/>
-                                                <DataGridTextColumn Header="Disconnect" Binding="{Binding Disconnect}" Width="100"/>
+                                                <DataGridTextColumn Header="Disconnect" Binding="{Binding Disconnect}" Width="90"/>
                                                 <DataGridCheckBoxColumn Header="Hold" Binding="{Binding HasHold}" Width="50"/>
                                                 <DataGridCheckBoxColumn Header="MOS" Binding="{Binding HasMos}" Width="50"/>
                                                 <DataGridTextColumn Header="Segments" Binding="{Binding SegmentCount}" Width="70"/>

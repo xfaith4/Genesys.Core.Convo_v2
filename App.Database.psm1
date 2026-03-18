@@ -20,7 +20,7 @@ Set-StrictMode -Version Latest
 
 $script:DbInitialized = $false
 $script:ConnStr       = $null
-$script:SchemaVersion = 2
+$script:SchemaVersion = 3
 
 # ── Private: DLL resolution ───────────────────────────────────────────────────
 
@@ -209,6 +209,25 @@ function _GetRelativePath {
     return $FullPath
 }
 
+function _AddColumnIfMissing {
+    <#
+    .SYNOPSIS
+        Adds a column to an existing table if it does not already exist.
+        SQLite throws "duplicate column name" when ALTER TABLE ADD COLUMN targets
+        an existing column; this helper ignores that specific error.
+    #>
+    param(
+        [Parameter(Mandatory)][System.Data.SQLite.SQLiteConnection]$Conn,
+        [Parameter(Mandatory)][string]$Table,
+        [Parameter(Mandatory)][string]$ColDef   # e.g. "agent_names TEXT NOT NULL DEFAULT ''"
+    )
+    try {
+        _NonQuery -Conn $Conn -Sql "ALTER TABLE $Table ADD COLUMN $ColDef" | Out-Null
+    } catch {
+        if ([string]$_.Exception.Message -notlike '*duplicate column*') { throw }
+    }
+}
+
 function _AssertSupportedContractVersion {
     param(
         [string]$Label,
@@ -324,12 +343,21 @@ function _ConvertConversationRecordToStoreRow {
     $segmentCount = 0
     $partCount    = 0
     $durationSec  = 0
+    $ani          = ''
+    $dnis         = ''
+    $agentIds     = New-Object System.Collections.Generic.List[string]
+    $divIdSet     = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
 
     if ($Record.PSObject.Properties['participants']) {
         $participants = @($Record.participants)
         $partCount    = $participants.Count
         foreach ($p in $participants) {
-            $isCustomer = ($p.PSObject.Properties['purpose'] -and $p.purpose -eq 'customer')
+            $purpose    = if ($p.PSObject.Properties['purpose']) { [string]$p.purpose } else { '' }
+            $isCustomer = ($purpose -eq 'customer')
+            $isAgent    = ($purpose -eq 'agent')
+            if ($isAgent -and $p.PSObject.Properties['userId'] -and $p.userId) {
+                $agentIds.Add([string]$p.userId) | Out-Null
+            }
             if (-not $p.PSObject.Properties['sessions']) { continue }
             foreach ($s in @($p.sessions)) {
                 if (-not $mediaType -and $s.PSObject.Properties['mediaType']) {
@@ -337,6 +365,10 @@ function _ConvertConversationRecordToStoreRow {
                 }
                 if ($isCustomer -and -not $direction -and $s.PSObject.Properties['direction']) {
                     $direction = [string]$s.direction
+                }
+                if ($isCustomer) {
+                    if (-not $ani  -and $s.PSObject.Properties['ani']  -and $s.ani)  { $ani  = [string]$s.ani  }
+                    if (-not $dnis -and $s.PSObject.Properties['dnis'] -and $s.dnis) { $dnis = [string]$s.dnis }
                 }
                 if ($s.PSObject.Properties['metrics']) {
                     foreach ($m in @($s.metrics)) {
@@ -360,6 +392,13 @@ function _ConvertConversationRecordToStoreRow {
                     }
                 }
             }
+        }
+    }
+
+    # Division IDs from top-level divisionIds array
+    if ($Record.PSObject.Properties['divisionIds'] -and $null -ne $Record.divisionIds) {
+        foreach ($d in @($Record.divisionIds)) {
+            if ($d) { $divIdSet.Add([string]$d) | Out-Null }
         }
     }
 
@@ -389,6 +428,10 @@ function _ConvertConversationRecordToStoreRow {
         attributes_json    = if ($Record.PSObject.Properties['attributes'])   { _ToJsonOrNull -Value $Record.attributes   } else { $null }
         source_file        = $RelativePath
         source_offset      = $ByteOffset
+        agent_names        = ($agentIds | Select-Object -Unique) -join '|'
+        division_ids       = ($divIdSet.GetEnumerator() | ForEach-Object { $_ }) -join '|'
+        ani                = $ani
+        dnis               = $dnis
     }
 }
 
@@ -414,14 +457,16 @@ INSERT OR REPLACE INTO conversations
      duration_sec, has_hold, has_mos, segment_count, participant_count,
      conversation_start, conversation_end,
      participants_json, attributes_json,
-     source_file, source_offset, imported_utc)
+     source_file, source_offset, imported_utc,
+     agent_names, division_ids, ani, dnis)
 VALUES
     (@cvid, @cid, @iid, @rid,
      @dir, @media, @queue, @disc,
      @dur, @hold, @mos, @segs, @ptcnt,
      @start, @end,
      @ptjson, @atjson,
-     @srcf, @srco, @now)
+     @srcf, @srco, @now,
+     @anames, @divids, @ani, @dnis)
 '@
 
     $pNames = '@cvid','@cid','@iid','@rid',
@@ -429,7 +474,8 @@ VALUES
               '@dur','@hold','@mos','@segs','@ptcnt',
               '@start','@end',
               '@ptjson','@atjson',
-              '@srcf','@srco','@now'
+              '@srcf','@srco','@now',
+              '@anames','@divids','@ani','@dnis'
     $pMap = @{}
     foreach ($n in $pNames) {
         $p = $cmd.CreateParameter()
@@ -470,9 +516,13 @@ VALUES
                 $pMap['@ptjson'].Value = if ($null -ne $ptj) { [object]$ptj } else { [System.DBNull]::Value }
                 $pMap['@atjson'].Value = if ($null -ne $atj) { [object]$atj } else { [System.DBNull]::Value }
 
-                $pMap['@srcf'].Value = [string](_RowVal $row 'source_file'   '')
-                $pMap['@srco'].Value = [long]  (_RowVal $row 'source_offset'  0)
-                $pMap['@now' ].Value = $ImportedUtc
+                $pMap['@srcf'  ].Value = [string](_RowVal $row 'source_file'   '')
+                $pMap['@srco'  ].Value = [long]  (_RowVal $row 'source_offset'  0)
+                $pMap['@now'   ].Value = $ImportedUtc
+                $pMap['@anames'].Value = [string](_RowVal $row 'agent_names'   '')
+                $pMap['@divids'].Value = [string](_RowVal $row 'division_ids'  '')
+                $pMap['@ani'   ].Value = [string](_RowVal $row 'ani'           '')
+                $pMap['@dnis'  ].Value = [string](_RowVal $row 'dnis'          '')
 
                 $cmd.ExecuteNonQuery() | Out-Null
                 $inserted++
@@ -783,6 +833,18 @@ CREATE TABLE IF NOT EXISTS case_audit (
     foreach ($idx in $indexes) {
         _NonQuery -Conn $Conn -Sql $idx | Out-Null
     }
+
+    # Schema v3 — pivot dimension columns added to conversations
+    # _AddColumnIfMissing is idempotent (ignores "duplicate column name")
+    _AddColumnIfMissing -Conn $Conn -Table 'conversations' -ColDef "agent_names   TEXT NOT NULL DEFAULT ''"
+    _AddColumnIfMissing -Conn $Conn -Table 'conversations' -ColDef "division_ids  TEXT NOT NULL DEFAULT ''"
+    _AddColumnIfMissing -Conn $Conn -Table 'conversations' -ColDef "ani           TEXT NOT NULL DEFAULT ''"
+    _AddColumnIfMissing -Conn $Conn -Table 'conversations' -ColDef "dnis          TEXT NOT NULL DEFAULT ''"
+
+    # v3 indexes
+    _NonQuery -Conn $Conn -Sql 'CREATE INDEX IF NOT EXISTS idx_conv_agent_names ON conversations(agent_names)' | Out-Null
+    _NonQuery -Conn $Conn -Sql 'CREATE INDEX IF NOT EXISTS idx_conv_ani         ON conversations(ani)'         | Out-Null
+    _NonQuery -Conn $Conn -Sql 'CREATE INDEX IF NOT EXISTS idx_conv_disc_type   ON conversations(disconnect_type)' | Out-Null
 
     # Stamp schema version on first creation and after migrations
     $count = [int](_Scalar -Conn $Conn -Sql 'SELECT COUNT(*) FROM schema_version')
@@ -1923,18 +1985,26 @@ function Get-ConversationCount {
     #>
     param(
         [Parameter(Mandatory)][string]$CaseId,
-        [string]$Direction  = '',
-        [string]$MediaType  = '',
-        [string]$Queue      = '',
-        [string]$SearchText = ''
+        [string]$Direction      = '',
+        [string]$MediaType      = '',
+        [string]$Queue          = '',
+        [string]$SearchText     = '',
+        [string]$DisconnectType = '',
+        [string]$AgentName      = '',
+        [string]$Ani            = '',
+        [string]$DivisionId     = ''
     )
     _RequireDb
     $where = 'case_id = @cid'
     $p     = @{ '@cid' = $CaseId }
-    if ($Direction)  { $where += ' AND direction  = @dir';                                $p['@dir']    = $Direction  }
-    if ($MediaType)  { $where += ' AND media_type = @media';                              $p['@media']  = $MediaType  }
-    if ($Queue)      { $where += ' AND queue_name LIKE @queue';                           $p['@queue']  = "%$Queue%"  }
-    if ($SearchText) { $where += ' AND (conversation_id LIKE @srch OR queue_name LIKE @srch)'; $p['@srch'] = "%$SearchText%" }
+    if ($Direction)      { $where += ' AND direction       = @dir';                                       $p['@dir']    = $Direction      }
+    if ($MediaType)      { $where += ' AND media_type      = @media';                                     $p['@media']  = $MediaType      }
+    if ($Queue)          { $where += ' AND queue_name      LIKE @queue';                                  $p['@queue']  = "%$Queue%"      }
+    if ($SearchText)     { $where += ' AND (conversation_id LIKE @srch OR queue_name LIKE @srch OR agent_names LIKE @srch)'; $p['@srch'] = "%$SearchText%" }
+    if ($DisconnectType) { $where += ' AND disconnect_type = @disc';                                      $p['@disc']   = $DisconnectType }
+    if ($AgentName)      { $where += ' AND agent_names     LIKE @agent';                                  $p['@agent']  = "%$AgentName%"  }
+    if ($Ani)            { $where += ' AND ani             LIKE @ani';                                    $p['@ani']    = "%$Ani%"        }
+    if ($DivisionId)     { $where += ' AND division_ids    LIKE @divid';                                  $p['@divid']  = "%$DivisionId%" }
 
     $conn = _Open
     try {
@@ -1950,30 +2020,38 @@ function Get-ConversationsPage {
     #>
     param(
         [Parameter(Mandatory)][string]$CaseId,
-        [int]$PageNumber    = 1,
-        [int]$PageSize      = 50,
-        [string]$Direction  = '',
-        [string]$MediaType  = '',
-        [string]$Queue      = '',
-        [string]$SearchText = '',
-        [string]$SortBy     = 'conversation_start',
-        [string]$SortDir    = 'DESC'
+        [int]$PageNumber        = 1,
+        [int]$PageSize          = 50,
+        [string]$Direction      = '',
+        [string]$MediaType      = '',
+        [string]$Queue          = '',
+        [string]$SearchText     = '',
+        [string]$DisconnectType = '',
+        [string]$AgentName      = '',
+        [string]$Ani            = '',
+        [string]$DivisionId     = '',
+        [string]$SortBy         = 'conversation_start',
+        [string]$SortDir        = 'DESC'
     )
     _RequireDb
 
     # Whitelist sort column to prevent injection.
     $allowedCols = @('conversation_id','direction','media_type','queue_name','disconnect_type',
                      'duration_sec','has_hold','has_mos','segment_count','participant_count',
-                     'conversation_start')
+                     'conversation_start','agent_names','ani')
     if ($SortBy  -notin $allowedCols)    { $SortBy  = 'conversation_start' }
     if ($SortDir -notin @('ASC','DESC')) { $SortDir = 'DESC' }
 
     $where = 'case_id = @cid'
     $p     = @{ '@cid' = $CaseId }
-    if ($Direction)  { $where += ' AND direction  = @dir';                                $p['@dir']    = $Direction  }
-    if ($MediaType)  { $where += ' AND media_type = @media';                              $p['@media']  = $MediaType  }
-    if ($Queue)      { $where += ' AND queue_name LIKE @queue';                           $p['@queue']  = "%$Queue%"  }
-    if ($SearchText) { $where += ' AND (conversation_id LIKE @srch OR queue_name LIKE @srch)'; $p['@srch'] = "%$SearchText%" }
+    if ($Direction)      { $where += ' AND direction       = @dir';                                       $p['@dir']    = $Direction      }
+    if ($MediaType)      { $where += ' AND media_type      = @media';                                     $p['@media']  = $MediaType      }
+    if ($Queue)          { $where += ' AND queue_name      LIKE @queue';                                  $p['@queue']  = "%$Queue%"      }
+    if ($SearchText)     { $where += ' AND (conversation_id LIKE @srch OR queue_name LIKE @srch OR agent_names LIKE @srch)'; $p['@srch'] = "%$SearchText%" }
+    if ($DisconnectType) { $where += ' AND disconnect_type = @disc';                                      $p['@disc']   = $DisconnectType }
+    if ($AgentName)      { $where += ' AND agent_names     LIKE @agent';                                  $p['@agent']  = "%$AgentName%"  }
+    if ($Ani)            { $where += ' AND ani             LIKE @ani';                                    $p['@ani']    = "%$Ani%"        }
+    if ($DivisionId)     { $where += ' AND division_ids    LIKE @divid';                                  $p['@divid']  = "%$DivisionId%" }
 
     $p['@limit']  = $PageSize
     $p['@offset'] = ($PageNumber - 1) * $PageSize
