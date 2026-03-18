@@ -74,10 +74,14 @@ function _Cmd {
     $cmd = $Conn.CreateCommand()
     $cmd.CommandText = $Sql
     foreach ($kv in $P.GetEnumerator()) {
-        $p       = $cmd.CreateParameter()
-        $p.ParameterName = $kv.Key
-        $p.Value = if ($null -eq $kv.Value) { [System.DBNull]::Value } else { $kv.Value }
-        $cmd.Parameters.Add($p) | Out-Null
+        # NOTE: variable named $param (not $p) to avoid colliding with the
+        # [hashtable]$P parameter — PowerShell variable names are case-insensitive,
+        # so $p and $P are the same variable; assigning a SQLiteParameter to a
+        # typed [hashtable] variable throws "Cannot convert ... to Hashtable".
+        $param              = $cmd.CreateParameter()
+        $param.ParameterName = $kv.Key
+        $param.Value         = if ($null -eq $kv.Value) { [System.DBNull]::Value } else { $kv.Value }
+        $cmd.Parameters.Add($param) | Out-Null
     }
     return $cmd
 }
