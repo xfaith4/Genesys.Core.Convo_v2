@@ -157,15 +157,20 @@ function _Dispatch {
 # ── Visual-tree helper ────────────────────────────────────────────────────────
 
 function _FindVisualChildren {
+    # Iterative BFS — avoids PowerShell's recursive-return unwrapping bugs
+    # (single-item list → bare object; empty list → $null) that break AddRange.
     param([System.Windows.DependencyObject]$Parent, [type]$ChildType)
-    $results = [System.Collections.Generic.List[object]]::new()
-    $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($Parent)
-    for ($i = 0; $i -lt $count; $i++) {
-        $child = [System.Windows.Media.VisualTreeHelper]::GetChild($Parent, $i)
-        if ($child -is $ChildType) { $results.Add($child) }
-        $results.AddRange((_FindVisualChildren -Parent $child -ChildType $ChildType))
+    $queue = [System.Collections.Generic.Queue[System.Windows.DependencyObject]]::new()
+    $queue.Enqueue($Parent)
+    while ($queue.Count -gt 0) {
+        $node  = $queue.Dequeue()
+        $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node)
+        for ($i = 0; $i -lt $count; $i++) {
+            $child = [System.Windows.Media.VisualTreeHelper]::GetChild($node, $i)
+            if ($child -is $ChildType) { Write-Output $child }
+            $queue.Enqueue($child)
+        }
     }
-    return $results
 }
 
 # ── Column filter boxes ───────────────────────────────────────────────────────
