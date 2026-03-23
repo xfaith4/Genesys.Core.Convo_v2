@@ -565,7 +565,7 @@
                                         <TextBlock Text="MISSION FLOW"
                                                    Style="{StaticResource LblSection}"
                                                    Margin="0,0,0,6"/>
-                                        <TextBlock Text="Move from extraction to investigation with a deliberate handoff between query setup, run execution, and case preservation."
+                                        <TextBlock Text="Build the query, execute the run, inspect the results, and preserve the case when escalation or follow-up is required."
                                                    Foreground="{StaticResource BrushText}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,10"/>

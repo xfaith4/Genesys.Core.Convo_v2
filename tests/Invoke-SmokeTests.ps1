@@ -183,7 +183,7 @@ try {
 
     SmokeCheck 'SMK-01' 'App.Config.psm1 round-trips portable paths through config.json' {
         $env:LOCALAPPDATA = Join-Path $tempRoot 'localappdata'
-        Import-AppModule 'App.Config.psm1'
+        Import-AppModule 'modules\App.Config.psm1'
 
         $cfg = Get-AppConfig
         $cfg | Add-Member -NotePropertyName 'OutputRoot' -NotePropertyValue (Join-Path $AppRoot 'tests/smoke-output') -Force
@@ -202,10 +202,10 @@ try {
 
     Write-Host "`n--- Run Folder ---" -ForegroundColor DarkCyan
 
-    Import-AppModule 'App.CoreAdapter.psm1'
-    Import-AppModule 'App.Index.psm1'
-    Import-AppModule 'App.Export.psm1'
-    Import-AppModule 'App.Reporting.psm1'
+    Import-AppModule 'modules\App.CoreAdapter.psm1'
+    Import-AppModule 'modules\App.Index.psm1'
+    Import-AppModule 'modules\App.Export.psm1'
+    Import-AppModule 'modules\App.Reporting.psm1'
 
     SmokeCheck 'SMK-02' 'Get-DiagnosticsText reads manifest, summary, and events from a run folder' {
         $diag = Get-DiagnosticsText -RunFolder $runFolder
@@ -277,7 +277,7 @@ try {
 
     Write-Host "`n--- Database ---" -ForegroundColor DarkCyan
 
-    Import-AppModule 'App.Database.psm1'
+    Import-AppModule 'modules\App.Database.psm1'
     $dbPath = Join-Path $tempRoot 'cases.sqlite'
     try {
         Initialize-Database -DatabasePath $dbPath -SqliteDllPath (Join-Path $AppRoot 'lib/System.Data.SQLite.dll') -AppDir $AppRoot

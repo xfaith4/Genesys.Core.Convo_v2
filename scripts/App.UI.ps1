@@ -1330,7 +1330,7 @@ function _StartRunInBackground {
     [void]$ps.AddScript({
         param($AppDir, $CorePath, $CatalogPath, $SchemaPath, $OutputRoot, $RunType, $DatasetParams, $Headers)
         Set-StrictMode -Version Latest
-        Import-Module (Join-Path $AppDir 'App.CoreAdapter.psm1') -Force
+        Import-Module (Join-Path $AppDir 'modules\App.CoreAdapter.psm1') -Force
         Initialize-CoreAdapter -CoreModulePath $CorePath -CatalogPath $CatalogPath -SchemaPath $SchemaPath -OutputRoot $OutputRoot
         if ($RunType -eq 'preview') {
             Start-PreviewRun -DatasetParameters $DatasetParams -Headers $Headers
@@ -1587,7 +1587,7 @@ function _ShowConnectDialog {
         $appDir = $script:UIAppDir
         [void]$ps2.AddScript({
             param($AppDir, $ClientId, $Region, $RedirectUri, $CancelToken)
-            Import-Module (Join-Path $AppDir 'App.Auth.psm1') -Force
+            Import-Module (Join-Path $AppDir 'modules\App.Auth.psm1') -Force
             Connect-GenesysCloudPkce -ClientId $ClientId -Region $Region `
                 -RedirectUri $RedirectUri -CancellationToken $CancelToken
         })

@@ -70,17 +70,17 @@ function ReadFile {
 
 function AllAppFiles {
     # Returns content of all app files EXCEPT tests/
-    $files = @('App.ps1','App.UI.ps1','App.CoreAdapter.psm1','App.Auth.psm1',
-               'App.Config.psm1','App.Index.psm1','App.Export.psm1','App.Reporting.psm1','App.Database.psm1')
+    $files = @('App.ps1','scripts\App.UI.ps1','modules\App.CoreAdapter.psm1','modules\App.Auth.psm1',
+               'modules\App.Config.psm1','modules\App.Index.psm1','modules\App.Export.psm1','modules\App.Reporting.psm1','modules\App.Database.psm1')
     $content = foreach ($f in $files) { ReadFile $f }
     return $content -join "`n"
 }
 
 function FilesExcluding {
     param([string[]]$Exclude)
-    $allFiles = @('App.ps1','App.UI.ps1','App.CoreAdapter.psm1','App.Auth.psm1',
-                  'App.Config.psm1','App.Index.psm1','App.Export.psm1','App.Reporting.psm1','App.Database.psm1',
-                  'XAML\MainWindow.xaml',
+    $allFiles = @('App.ps1','scripts\App.UI.ps1','modules\App.CoreAdapter.psm1','modules\App.Auth.psm1',
+                  'modules\App.Config.psm1','modules\App.Index.psm1','modules\App.Export.psm1','modules\App.Reporting.psm1','modules\App.Database.psm1',
+                  'resources\MainWindow.xaml',
                   'tests\Test-Compliance.ps1','tests\Invoke-AllTests.ps1')
     $filtered = $allFiles | Where-Object { $_ -notin $Exclude }
     return ($filtered | ForEach-Object { ReadFile $_ }) -join "`n"
@@ -91,25 +91,25 @@ function FilesExcluding {
 Write-Host "`n=== STRUCTURE ===" -ForegroundColor Cyan
 
 Check 'STR-01' 'App.ps1 exists'                    { FileExists 'App.ps1' }
-Check 'STR-02' 'App.UI.ps1 exists'                 { FileExists 'App.UI.ps1' }
-Check 'STR-03' 'App.CoreAdapter.psm1 exists'       { FileExists 'App.CoreAdapter.psm1' }
-Check 'STR-04' 'App.Auth.psm1 exists'              { FileExists 'App.Auth.psm1' }
-Check 'STR-05' 'App.Config.psm1 exists'            { FileExists 'App.Config.psm1' }
-Check 'STR-06' 'App.Index.psm1 exists'             { FileExists 'App.Index.psm1' }
-Check 'STR-07' 'App.Export.psm1 exists'            { FileExists 'App.Export.psm1' }
-Check 'STR-08' 'App.Database.psm1 exists'          { FileExists 'App.Database.psm1' }
-Check 'STR-08A' 'App.Reporting.psm1 exists'        { FileExists 'App.Reporting.psm1' }
-Check 'STR-09' 'XAML\MainWindow.xaml exists'       { FileExists 'XAML\MainWindow.xaml' }
-Check 'STR-10' 'tests\Test-Compliance.ps1 exists'  { FileExists 'tests\Test-Compliance.ps1' }
-Check 'STR-11' 'tests\Invoke-AllTests.ps1 exists'  { FileExists 'tests\Invoke-AllTests.ps1' }
-Check 'STR-12' 'Database_Design.md exists'         { FileExists 'Database_Design.md' }
-Check 'STR-13' 'Case_Lifecycle_and_Retention.md exists' { FileExists 'Case_Lifecycle_and_Retention.md' }
+Check 'STR-02' 'scripts\App.UI.ps1 exists'                 { FileExists 'scripts\App.UI.ps1' }
+Check 'STR-03' 'modules\App.CoreAdapter.psm1 exists'       { FileExists 'modules\App.CoreAdapter.psm1' }
+Check 'STR-04' 'modules\App.Auth.psm1 exists'              { FileExists 'modules\App.Auth.psm1' }
+Check 'STR-05' 'modules\App.Config.psm1 exists'            { FileExists 'modules\App.Config.psm1' }
+Check 'STR-06' 'modules\App.Index.psm1 exists'             { FileExists 'modules\App.Index.psm1' }
+Check 'STR-07' 'modules\App.Export.psm1 exists'            { FileExists 'modules\App.Export.psm1' }
+Check 'STR-08' 'modules\App.Database.psm1 exists'          { FileExists 'modules\App.Database.psm1' }
+Check 'STR-08A' 'modules\App.Reporting.psm1 exists'        { FileExists 'modules\App.Reporting.psm1' }
+Check 'STR-09' 'resources\MainWindow.xaml exists'          { FileExists 'resources\MainWindow.xaml' }
+Check 'STR-10' 'tests\Test-Compliance.ps1 exists'          { FileExists 'tests\Test-Compliance.ps1' }
+Check 'STR-11' 'tests\Invoke-AllTests.ps1 exists'          { FileExists 'tests\Invoke-AllTests.ps1' }
+Check 'STR-12' 'docs\Database_Design.md exists'            { FileExists 'docs\Database_Design.md' }
+Check 'STR-13' 'docs\Case_Lifecycle_and_Retention.md exists' { FileExists 'docs\Case_Lifecycle_and_Retention.md' }
 
 # ── REST CALL ISOLATION (REST) ────────────────────────────────────────────────
 
 Write-Host "`n=== REST ISOLATION (Gate D) ===" -ForegroundColor Cyan
 
-$nonAuthContent = FilesExcluding -Exclude @('App.Auth.psm1', 'tests\Test-Compliance.ps1', 'tests\Invoke-AllTests.ps1')
+$nonAuthContent = FilesExcluding -Exclude @('modules\App.Auth.psm1', 'tests\Test-Compliance.ps1', 'tests\Invoke-AllTests.ps1')
 
 Check 'REST-01' 'Invoke-RestMethod absent outside App.Auth.psm1' {
     -not ($nonAuthContent -match 'Invoke-RestMethod')
@@ -125,14 +125,14 @@ Check 'REST-03' 'No /api/v2/ literal in any app file' {
 
 # Auth file itself must NOT contain /api/v2/
 Check 'REST-04' 'No /api/v2/ literal in App.Auth.psm1' {
-    -not ((ReadFile 'App.Auth.psm1') -match '/api/v2/')
+    -not ((ReadFile 'modules\App.Auth.psm1') -match '/api/v2/')
 }
 
 # ── CORE IMPORT ISOLATION (CORE) ─────────────────────────────────────────────
 
 Write-Host "`n=== CORE IMPORT ISOLATION (Gate D) ===" -ForegroundColor Cyan
 
-$nonAdapterContent = FilesExcluding -Exclude @('App.CoreAdapter.psm1','tests\Test-Compliance.ps1','tests\Invoke-AllTests.ps1')
+$nonAdapterContent = FilesExcluding -Exclude @('modules\App.CoreAdapter.psm1','tests\Test-Compliance.ps1','tests\Invoke-AllTests.ps1')
 
 Check 'CORE-01' 'Genesys.Core Import-Module only in App.CoreAdapter.psm1' {
     -not ($nonAdapterContent -match "Import-Module.*Genesys\.Core")
@@ -148,15 +148,15 @@ Check 'CORE-03' 'Invoke-Dataset only in App.CoreAdapter.psm1' {
 
 # CoreAdapter itself must contain both Assert-Catalog and Invoke-Dataset
 Check 'CORE-04' 'App.CoreAdapter.psm1 calls Assert-Catalog' {
-    (ReadFile 'App.CoreAdapter.psm1') -match 'Assert-Catalog'
+    (ReadFile 'modules\App.CoreAdapter.psm1') -match 'Assert-Catalog'
 }
 
 Check 'CORE-05' 'App.CoreAdapter.psm1 calls Invoke-Dataset' {
-    (ReadFile 'App.CoreAdapter.psm1') -match 'Invoke-Dataset'
+    (ReadFile 'modules\App.CoreAdapter.psm1') -match 'Invoke-Dataset'
 }
 
 Check 'CORE-06' 'App.CoreAdapter.psm1 imports Genesys.Core' {
-    (ReadFile 'App.CoreAdapter.psm1') -match 'Import-Module'
+    (ReadFile 'modules\App.CoreAdapter.psm1') -match 'Import-Module'
 }
 
 # ── NO VENDORED CORE (VENDOR) ─────────────────────────────────────────────────
@@ -177,7 +177,7 @@ Check 'VENDOR-02' 'No Genesys.Core.psd1 file vendored in repo' {
 
 Write-Host "`n=== AUTH CONTAINMENT (Gate E) ===" -ForegroundColor Cyan
 
-$authContent = ReadFile 'App.Auth.psm1'
+$authContent = ReadFile 'modules\App.Auth.psm1'
 
 Check 'AUTH-01' 'App.Auth.psm1 uses ProtectedData::Protect (DPAPI)' {
     $authContent -match 'ProtectedData.*Protect'
@@ -209,7 +209,7 @@ Check 'AUTH-05' 'App.Auth.psm1 exports required functions' {
 
 Write-Host "`n=== DATASET KEYS ===" -ForegroundColor Cyan
 
-$adapterContent = ReadFile 'App.CoreAdapter.psm1'
+$adapterContent = ReadFile 'modules\App.CoreAdapter.psm1'
 
 Check 'DS-01' 'Preview dataset key analytics-conversation-details-query present' {
     $adapterContent -match 'analytics-conversation-details-query'
@@ -229,7 +229,7 @@ Check 'DS-03' 'Two distinct dataset keys (no collapse)' {
 
 Write-Host "`n=== INDEXING SIGNALS (Gate C) ===" -ForegroundColor Cyan
 
-$indexContent = ReadFile 'App.Index.psm1'
+$indexContent = ReadFile 'modules\App.Index.psm1'
 
 Check 'IDX-01' 'Build-RunIndex function present' {
     $indexContent -match 'function Build-RunIndex'
@@ -273,7 +273,7 @@ Check 'IDX-08' 'Export-ModuleMember lists required index functions' {
 
 Write-Host "`n=== EXPORT STREAMING ===" -ForegroundColor Cyan
 
-$exportContent = ReadFile 'App.Export.psm1'
+$exportContent = ReadFile 'modules\App.Export.psm1'
 
 Check 'EXP-01' 'Export-RunToCsv function present' {
     $exportContent -match 'function Export-RunToCsv'
@@ -310,7 +310,7 @@ Check 'EXP-06' 'Export-ModuleMember lists required export functions' {
 
 Write-Host "`n=== REPORTING ===" -ForegroundColor Cyan
 
-$reportingContent = ReadFile 'App.Reporting.psm1'
+$reportingContent = ReadFile 'modules\App.Reporting.psm1'
 
 Check 'RPT-01' 'App.Reporting.psm1 defines New-ImpactReport' {
     $reportingContent -match 'function New-ImpactReport'
@@ -321,7 +321,7 @@ Check 'RPT-02' 'App.Reporting.psm1 exports New-ImpactReport' {
 }
 
 Check 'RPT-03' 'App.UI.ps1 wires BtnGenerateReport' {
-    (ReadFile 'App.UI.ps1') -match 'BtnGenerateReport'
+    (ReadFile 'scripts\App.UI.ps1') -match 'BtnGenerateReport'
 }
 
 # ── GATE A: STARTUP INIT (INIT) ───────────────────────────────────────────────
@@ -358,7 +358,7 @@ Check 'INIT-05' 'App.ps1 persists last date/time filters on close' {
 
 Write-Host "`n=== BACKGROUND RUNSPACE ===" -ForegroundColor Cyan
 
-$uiContent = ReadFile 'App.UI.ps1'
+$uiContent = ReadFile 'scripts\App.UI.ps1'
 
 Check 'BG-01' 'App.UI.ps1 creates background runspace for run' {
     $uiContent -match 'CreateRunspace'
@@ -384,7 +384,7 @@ Check 'BG-05' 'Polling DispatcherTimer used for status updates' {
 
 Write-Host "`n=== XAML CONTROLS ===" -ForegroundColor Cyan
 
-$xamlContent = ReadFile 'XAML\MainWindow.xaml'
+$xamlContent = ReadFile 'resources\MainWindow.xaml'
 
 $requiredControls = @(
     'BtnRun','BtnCancelRun','BtnPreviewRun',
@@ -416,8 +416,8 @@ foreach ($ctrl in $requiredControls) {
 
 Write-Host "`n=== STRICT MODE ===" -ForegroundColor Cyan
 
-$modulesToCheck = @('App.CoreAdapter.psm1','App.Auth.psm1','App.Config.psm1',
-                    'App.Index.psm1','App.Export.psm1','App.Database.psm1')
+$modulesToCheck = @('modules\App.CoreAdapter.psm1','modules\App.Auth.psm1','modules\App.Config.psm1',
+                    'modules\App.Index.psm1','modules\App.Export.psm1','modules\App.Database.psm1')
 foreach ($m in $modulesToCheck) {
     Check "STRICT-$m" "$m uses Set-StrictMode -Version Latest" {
         (ReadFile $m) -match 'Set-StrictMode.*Latest'
@@ -428,7 +428,7 @@ foreach ($m in $modulesToCheck) {
 
 Write-Host "`n=== CASE WORKFLOW / RETENTION ===" -ForegroundColor Cyan
 
-$dbContent = ReadFile 'App.Database.psm1'
+$dbContent = ReadFile 'modules\App.Database.psm1'
 
 Check 'CASE-01' 'App.Database.psm1 defines case workflow tables' {
     $dbContent -match 'CREATE TABLE IF NOT EXISTS case_audit' -and

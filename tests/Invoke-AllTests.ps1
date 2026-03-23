@@ -79,15 +79,15 @@ Write-Host "║  Suite 2 – Architecture Invariants              ║" -Foregrou
 Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
 $appPs      = ReadFile 'App.ps1'
-$uiPs       = ReadFile 'App.UI.ps1'
-$adapter    = ReadFile 'App.CoreAdapter.psm1'
-$index      = ReadFile 'App.Index.psm1'
-$export     = ReadFile 'App.Export.psm1'
-$reporting  = ReadFile 'App.Reporting.psm1'
-$database   = ReadFile 'App.Database.psm1'
-$auth       = ReadFile 'App.Auth.psm1'
-$config     = ReadFile 'App.Config.psm1'
-$xaml       = ReadFile 'XAML\MainWindow.xaml'
+$uiPs       = ReadFile 'scripts\App.UI.ps1'
+$adapter    = ReadFile 'modules\App.CoreAdapter.psm1'
+$index      = ReadFile 'modules\App.Index.psm1'
+$export     = ReadFile 'modules\App.Export.psm1'
+$reporting  = ReadFile 'modules\App.Reporting.psm1'
+$database   = ReadFile 'modules\App.Database.psm1'
+$auth       = ReadFile 'modules\App.Auth.psm1'
+$config     = ReadFile 'modules\App.Config.psm1'
+$xaml       = ReadFile 'resources\MainWindow.xaml'
 
 # ── Architecture: startup path ────────────────────────────────────────────────
 Write-Host "`n--- Startup path ---" -ForegroundColor DarkCyan

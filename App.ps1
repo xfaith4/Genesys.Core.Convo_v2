@@ -27,13 +27,13 @@ Add-Type -AssemblyName Microsoft.Win32.Primitives  -ErrorAction SilentlyContinue
 
 # ── 2. Import app modules ─────────────────────────────────────────────────────
 # Order matters: Config → Auth → CoreAdapter → Index → Export → Reporting → Database
-Import-Module (Join-Path $AppDir 'App.Config.psm1')      -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'App.Auth.psm1')         -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'App.CoreAdapter.psm1')  -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'App.Index.psm1')        -Force -ErrorAction Stop -DisableNameChecking
-Import-Module (Join-Path $AppDir 'App.Export.psm1')       -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'App.Reporting.psm1')    -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'App.Database.psm1')     -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.Config.psm1')      -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.Auth.psm1')         -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.CoreAdapter.psm1')  -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.Index.psm1')        -Force -ErrorAction Stop -DisableNameChecking
+Import-Module (Join-Path $AppDir 'modules\App.Export.psm1')       -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.Reporting.psm1')    -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.Database.psm1')     -Force -ErrorAction Stop
 
 # ── Bootstrap: auto-clone Genesys.Core if it has never been set up ───────────
 #
@@ -248,7 +248,7 @@ try {
 }
 
 # ── 5. Load XAML ──────────────────────────────────────────────────────────────
-$xamlPath = Join-Path $AppDir 'XAML\MainWindow.xaml'
+$xamlPath = Join-Path $AppDir 'resources\MainWindow.xaml'
 if (-not [System.IO.File]::Exists($xamlPath)) {
     [System.Windows.MessageBox]::Show(
         "XAML file not found: $xamlPath",
@@ -275,7 +275,7 @@ try {
 }
 
 # ── 6. Dot-source App.UI.ps1 ─────────────────────────────────────────────────
-. (Join-Path $AppDir 'App.UI.ps1')
+. (Join-Path $AppDir 'scripts\App.UI.ps1')
 
 # ── 7. Wire Window.Closing – persist dates and stop background run ────────────
 $script:Window.Add_Closing({

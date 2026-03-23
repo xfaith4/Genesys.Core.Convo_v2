@@ -1,13 +1,13 @@
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
 
-$script:AppDir     = [System.IO.Path]::GetFullPath($PSScriptRoot)
+$script:AppDir     = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..'))
 $script:ConfigDir  = [System.IO.Path]::Combine($env:LOCALAPPDATA, 'GenesysConversationAnalysis')
 $script:ConfigFile = [System.IO.Path]::Combine($script:ConfigDir, 'config.json')
 
 # Sibling layout: <workspace>/Genesys.Core/ lives next to the app directory.
 # Computed at import time so defaults are correct on any machine.
-$script:_CoreSiblingRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'Genesys.Core'))
+$script:_CoreSiblingRoot      = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'Genesys.Core'))
 $script:DefaultCoreModulePath = [System.IO.Path]::Combine($script:_CoreSiblingRoot, 'modules', 'Genesys.Core', 'Genesys.Core.psd1')
 $script:DefaultCatalogPath    = [System.IO.Path]::Combine($script:_CoreSiblingRoot, 'catalog', 'genesys.catalog.json')
 $script:DefaultSchemaPath     = [System.IO.Path]::Combine($script:_CoreSiblingRoot, 'catalog', 'schema', 'genesys.catalog.schema.json')
