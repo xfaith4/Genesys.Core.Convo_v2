@@ -1947,7 +1947,7 @@ function _ShowConnectDialog {
         # Poll for PKCE completion
         $pkceTimer = New-Object System.Windows.Threading.DispatcherTimer
         $pkceTimer.Interval = [System.TimeSpan]::FromSeconds(1)
-        $pkceTimer.Add_Tick({
+        $pkceTimer.Add_Tick(({
             if (-not $ar2.IsCompleted) { return }
             $pkceTimer.Stop()
             try {
@@ -1964,7 +1964,7 @@ function _ShowConnectDialog {
                 try { $cts.Dispose() } catch { }
                 $script:State.PkceCancel = $null
             }
-        })
+        }).GetNewClosure())
         $pkceTimer.Start()
     })
 
