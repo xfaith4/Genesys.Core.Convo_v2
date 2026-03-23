@@ -3,7 +3,7 @@
 You are the **Genesys Core Conversation Analysis App Reconstruction Engineer**.
 Your job is to rebuild this application from scratch so that it matches the current repository behavior and architecture exactly.
 
-# RECONSTRUCTION TARGET (CURRENT BASELINE)
+## RECONSTRUCTION TARGET (CURRENT BASELINE)
 
 Reconstruct the app as a **PowerShell 5.1+ / 7.x compatible WPF desktop application** named **Genesys Conversation Analysis**, with a strict **Core-first** architecture:
 
@@ -13,7 +13,7 @@ Reconstruct the app as a **PowerShell 5.1+ / 7.x compatible WPF desktop applicat
 
 Assume this prompt supersedes earlier versions and reflects the app state as of **March 4, 2026**.
 
-# NON-NEGOTIABLE ARCHITECTURE
+## NON-NEGOTIABLE ARCHITECTURE
 
 1. **Core extraction boundary**
 
@@ -43,7 +43,7 @@ Assume this prompt supersedes earlier versions and reflects the app state as of 
 - The background runspace must import `App.CoreAdapter.psm1` **and call `Initialize-CoreAdapter` in that runspace** before `Start-PreviewRun`/`Start-FullRun`.
 - Reason: module script state is runspace-local.
 
-# REQUIRED INPUTS
+## REQUIRED INPUTS
 
 - Core module path:
   `..\Genesys.Core\modules\Genesys.Core\Genesys.Core.psd1`
@@ -58,7 +58,7 @@ Also support environment overrides:
 - `GENESYS_CORE_CATALOG`
 - `GENESYS_CORE_SCHEMA`
 
-# FILES TO PRODUCE
+## FILES TO PRODUCE
 
 - `App.ps1`
 - `App.UI.ps1`
@@ -71,9 +71,9 @@ Also support environment overrides:
 - `tests\Test-Compliance.ps1`
 - `tests\Invoke-AllTests.ps1`
 
-# MODULE CONTRACTS (EXACT BEHAVIOR)
+## MODULE CONTRACTS (EXACT BEHAVIOR)
 
-## `App.ps1`
+### `App.ps1`
 
 Responsibilities:
 
@@ -85,7 +85,7 @@ Responsibilities:
 - Dot-source `App.UI.ps1`.
 - On close: stop timers/background run and persist `LastStartDate` / `LastEndDate`.
 
-## `App.CoreAdapter.psm1`
+### `App.CoreAdapter.psm1`
 
 Must export:
 
@@ -108,7 +108,7 @@ Required details:
 - Both pass `CatalogPath`, `OutputRoot`, `DatasetParameters`, optional `Headers`.
 - `Get-RunEvents` uses `FileStream + StreamReader` and returns last N parsed JSON events.
 
-## `App.Index.psm1`
+### `App.Index.psm1`
 
 Must export:
 
@@ -132,7 +132,7 @@ Required implementation characteristics:
 - Compute offsets robustly for UTF-8 BOM and newline style (`LF`/`CRLF`).
 - `Get-IndexedPage` must retrieve records from indexed byte offsets without rescanning full files.
 
-## `App.Export.psm1`
+### `App.Export.psm1`
 
 Must export:
 
@@ -148,7 +148,7 @@ Required behavior:
 - Flattened row includes core summary plus hold, transfer, MOS rollups.
 - Optional attribute flattening with `attr_` prefix.
 
-## `App.Auth.psm1` (Gate E escape hatch)
+### `App.Auth.psm1` (Gate E escape hatch)
 
 Must export:
 
@@ -165,7 +165,7 @@ Required behavior:
 - No `/api/v2/` literal anywhere in app files.
 - Store tokens using DPAPI (`ProtectedData::Protect/Unprotect`) in `%LOCALAPPDATA%\GenesysConversationAnalysis\auth.dat`.
 
-## `App.Config.psm1`
+### `App.Config.psm1`
 
 Must export:
 
@@ -183,7 +183,7 @@ Default config includes:
 - last dates
 - PKCE client id and redirect URI
 
-## `App.UI.ps1`
+### `App.UI.ps1`
 
 Must include:
 
@@ -222,7 +222,7 @@ Known current UI nuance to preserve:
 
 - `BtnExpandJson` exists in XAML but has no bound handler in `App.UI.ps1`.
 
-## `XAML\MainWindow.xaml`
+### `XAML\MainWindow.xaml`
 
 Must define a three-zone layout:
 
@@ -238,7 +238,7 @@ Required control names must match UI script expectations (examples):
 
 - `BtnRun`, `BtnCancelRun`, `DgConversations`, `LstRecentRuns`, `BtnCopyDiagnostics`, `TxtRunProgress`, `TxtRunStatus`, etc.
 
-# RUN FOLDER DATA CONTRACT
+## RUN FOLDER DATA CONTRACT
 
 Expect each run folder to contain:
 
@@ -252,23 +252,23 @@ Rules:
 - Never mutate these artifacts during viewing/export.
 - Treat them as immutable evidence.
 
-# HARD GATES (FAIL IF VIOLATED)
+## HARD GATES (FAIL IF VIOLATED)
 
-## Gate A: Core initialization
+### Gate A: Core initialization
 
 - `Initialize-CoreAdapter` must import Core and call `Assert-Catalog` at startup.
 - Startup must fail with visible error if invalid.
 
-## Gate B: Dataset-only extraction
+### Gate B: Dataset-only extraction
 
 - Preview and full run must call CoreAdapter functions that invoke `Invoke-Dataset`.
 - No alternate extraction path.
 
-## Gate C: Artifact-driven UI
+### Gate C: Artifact-driven UI
 
 - UI uses run artifacts + index for paging and drilldown.
 
-## Gate D: Mechanical compliance
+### Gate D: Mechanical compliance
 
 - Enforce via test scripts.
 - Forbidden outside `App.Auth.psm1`:
@@ -278,14 +278,14 @@ Rules:
 - `Genesys.Core` import only in `App.CoreAdapter.psm1`.
 - No vendored copy of `Genesys.Core` in repo.
 
-## Gate E: Auth containment
+### Gate E: Auth containment
 
 - Auth logic isolated to `App.Auth.psm1`.
 - OAuth endpoints only on `login.{region}`.
 
-# TESTS TO IMPLEMENT (AND PASS)
+## TESTS TO IMPLEMENT (AND PASS)
 
-## `tests\Test-Compliance.ps1`
+### `tests\Test-Compliance.ps1`
 
 Must perform pass/fail checks for:
 
@@ -299,7 +299,7 @@ Must perform pass/fail checks for:
 - indexing implementation signals (`Build-RunIndex`, `Get-IndexedPage`, `Seek`, `StreamReader`)
 - export streaming signals (`Export-RunToCsv`, `StreamReader`)
 
-## `tests\Invoke-AllTests.ps1`
+### `tests\Invoke-AllTests.ps1`
 
 Must run:
 
@@ -310,20 +310,20 @@ Must run:
   - index and export streaming markers
   - dataset keys match expected two-key model
 
-# PERFORMANCE REQUIREMENTS
+## PERFORMANCE REQUIREMENTS
 
 - Use `Set-StrictMode -Version Latest` in all modules.
 - Avoid `Get-Content` for large JSONL paging/export paths.
 - Use `StreamReader`/`FileStream` for large-file operations.
 - Keep UI responsive during extraction (background runspace + dispatcher timer).
 
-# POWERSHELL RULES
+## POWERSHELL RULES
 
 - Keep PS 5.1 compatibility.
 - Use `$($var)` style where variable is immediately followed by `:` in interpolated strings.
 - Prefer `[System.IO.Path]` and explicit .NET APIs for deterministic file behavior.
 
-# BUSINESS OUTPUT INTENT
+## BUSINESS OUTPUT INTENT
 
 The rebuilt app must help operations/reporting users answer:
 
@@ -336,7 +336,7 @@ The rebuilt app must help operations/reporting users answer:
 
 This is delivered through fast preview runs, scalable full runs, drilldown analysis, and exportable evidence.
 
-# REQUIRED RESPONSE FORMAT WHEN GENERATING THIS APP
+## REQUIRED RESPONSE FORMAT WHEN GENERATING THIS APP
 
 Return in this order:
 
@@ -347,19 +347,19 @@ Return in this order:
 5. Run instructions
 6. Manual validation steps
 
-# PRODUCTION HANDOFF MODE (MANDATORY)
+## PRODUCTION HANDOFF MODE (MANDATORY)
 
 Treat output as a delivery package for engineering leadership and operations ownership.
 Do not provide an informal answer. Provide an auditable handoff artifact.
 
-## Handoff Quality Bar
+### Handoff Quality Bar
 
 - Every requirement must map to concrete implementation evidence.
 - Every gate must map to at least one executable verification step.
 - Every known limitation must be explicitly declared with impact and mitigation.
 - No placeholders like \"TBD\", \"as needed\", or \"etc.\" in final handoff.
 
-## Required Additional Sections (append after section 6 above)
+### Required Additional Sections (append after section 6 above)
 
 1. **Requirements Traceability Matrix**
 
@@ -427,14 +427,14 @@ Do not provide an informal answer. Provide an auditable handoff artifact.
   - non-blocking follow-ups
   - recommended release scope
 
-## Documentation Fidelity Rules
+### Documentation Fidelity Rules
 
 - Use absolute Windows paths where relevant.
 - Use exact script/function/control names as implemented.
 - Any inferred behavior must be marked `Inference`.
 - Any unverified behavior must be marked `Not Verified`.
 
-## Evidence Standard
+### Evidence Standard
 
 - When citing implementation evidence, include:
   - file path
@@ -445,7 +445,7 @@ Do not provide an informal answer. Provide an auditable handoff artifact.
   - check name
   - expected pass condition
 
-## Acceptance Rule For This Prompt
+### Acceptance Rule For This Prompt
 
 A response generated from this prompt is acceptable only if:
 
