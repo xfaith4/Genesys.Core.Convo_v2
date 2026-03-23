@@ -307,10 +307,10 @@ $script:Window.Add_Closing({
         $endDate   = $script:DtpEndDate.SelectedDate
         $cfg2 = Get-AppConfig
         if ($null -ne $startDate) {
-            $cfg2 | Add-Member -NotePropertyName 'LastStartDate' -NotePropertyValue $startDate.Value.ToString('o') -Force
+            $cfg2 | Add-Member -NotePropertyName 'LastStartDate' -NotePropertyValue $startDate.ToString('o') -Force
         }
         if ($null -ne $endDate) {
-            $cfg2 | Add-Member -NotePropertyName 'LastEndDate' -NotePropertyValue $endDate.Value.ToString('o') -Force
+            $cfg2 | Add-Member -NotePropertyName 'LastEndDate' -NotePropertyValue $endDate.ToString('o') -Force
         }
         $cfg2 | Add-Member -NotePropertyName 'LastStartTime' -NotePropertyValue $script:TxtStartTime.Text.Trim() -Force
         $cfg2 | Add-Member -NotePropertyName 'LastEndTime' -NotePropertyValue $script:TxtEndTime.Text.Trim() -Force

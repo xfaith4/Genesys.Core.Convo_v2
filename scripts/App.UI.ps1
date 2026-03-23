@@ -269,7 +269,7 @@ function _GetSelectedDateTime {
         return $null
     }
 
-    $date = $DatePicker.SelectedDate.Value.Date
+    $date = $DatePicker.SelectedDate.Date
     $time = _ParseTimeText -Text $TimeText -DefaultTime $DefaultTime -FieldName $FieldName
     return $date.Add($time)
 }
