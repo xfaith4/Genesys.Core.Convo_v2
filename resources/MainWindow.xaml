@@ -339,17 +339,17 @@
                                    HorizontalAlignment="Right" Width="4"
                                    Cursor="SizeWE" Background="Transparent"
                                    BorderThickness="0"/>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="SortDirection" Value="Ascending">
-                                    <Setter TargetName="SortArrow" Property="Text" Value="▲"/>
-                                    <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
-                                </Trigger>
-                                <Trigger Property="SortDirection" Value="Descending">
-                                    <Setter TargetName="SortArrow" Property="Text" Value="▼"/>
-                                    <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
                         </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="SortDirection" Value="Ascending">
+                                <Setter TargetName="SortArrow" Property="Text" Value="▲"/>
+                                <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="SortDirection" Value="Descending">
+                                <Setter TargetName="SortArrow" Property="Text" Value="▼"/>
+                                <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
