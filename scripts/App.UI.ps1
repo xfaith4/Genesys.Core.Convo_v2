@@ -27,6 +27,9 @@ $script:TxtQueue               = _Ctrl 'TxtQueue'
 $script:TxtConversationId      = _Ctrl 'TxtConversationId'
 $script:TxtFilterUserId        = _Ctrl 'TxtFilterUserId'
 $script:TxtFilterDivisionId    = _Ctrl 'TxtFilterDivisionId'
+$script:ChkExternalTagExists   = _Ctrl 'ChkExternalTagExists'
+$script:TxtFlowName            = _Ctrl 'TxtFlowName'
+$script:CmbMessageType         = _Ctrl 'CmbMessageType'
 $script:TxtPreviewPageSize     = _Ctrl 'TxtPreviewPageSize'
 $script:BtnPreviewRun          = _Ctrl 'BtnPreviewRun'
 $script:BtnRun                 = _Ctrl 'BtnRun'
@@ -310,6 +313,9 @@ function _GetCurrentViewSnapshot {
         extract_direction = if ($script:CmbDirection.SelectedItem -and $script:CmbDirection.SelectedItem.Content -ne '(all)') { $script:CmbDirection.SelectedItem.Content } else { '' }
         extract_media     = if ($script:CmbMediaType.SelectedItem -and $script:CmbMediaType.SelectedItem.Content -ne '(all)') { $script:CmbMediaType.SelectedItem.Content } else { '' }
         queue_contains    = $script:TxtQueue.Text.Trim()
+        external_tag_exists = ($script:ChkExternalTagExists.IsChecked -eq $true)
+        flow_name           = $script:TxtFlowName.Text.Trim()
+        msg_type            = if ($script:CmbMessageType.SelectedItem -and $script:CmbMessageType.SelectedItem.Content -ne '(all)') { $script:CmbMessageType.SelectedItem.Content } else { '' }
         start_date_utc    = if ($null -ne $range.Start) { $range.Start.ToUniversalTime().ToString('o') } else { '' }
         end_date_utc      = if ($null -ne $range.End)   { $range.End.ToUniversalTime().ToString('o')   } else { '' }
         page_size         = $script:State.PageSize
@@ -1266,6 +1272,29 @@ function _GetDatasetParameters {
 
     $divId = $script:TxtFilterDivisionId.Text.Trim()
     if ($divId) { $params['DivisionId'] = $divId }
+
+    if ($script:ChkExternalTagExists.IsChecked -eq $true) {
+        $params['ConversationFilters'] = @(@{
+            predicates = @(@{ dimension = 'externalTag'; operator = 'exists' })
+        })
+    }
+
+    # ── Segment-level filters (flowName, messageType) ─────────────────────────
+    $segPredicates = [System.Collections.Generic.List[hashtable]]::new()
+
+    $flowName = $script:TxtFlowName.Text.Trim()
+    if ($flowName) {
+        $segPredicates.Add(@{ type = 'dimension'; dimension = 'flowName'; value = $flowName })
+    }
+
+    $selMsgType = $script:CmbMessageType.SelectedItem
+    if ($selMsgType -and $selMsgType.Content -ne '(all)') {
+        $segPredicates.Add(@{ type = 'dimension'; dimension = 'messageType'; value = $selMsgType.Content })
+    }
+
+    if ($segPredicates.Count -gt 0) {
+        $params['SegmentFilters'] = @(@{ type = 'and'; predicates = $segPredicates.ToArray() })
+    }
 
     return $params
 }

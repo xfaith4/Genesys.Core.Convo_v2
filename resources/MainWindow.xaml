@@ -562,7 +562,7 @@
                                         Padding="14"
                                         Margin="0,0,0,14">
                                     <StackPanel>
-                                        <TextBlock Text="MISSION FLOW"
+                                        <TextBlock Text="INVESTIGATION WORKFLOW"
                                                    Style="{StaticResource LblSection}"
                                                    Margin="0,0,0,6"/>
                                         <TextBlock Text="Build the query, execute the run, inspect the results, and preserve the case when escalation or follow-up is required."
@@ -585,7 +585,7 @@
                                             <TextBlock Grid.Row="0" Grid.Column="1" Text="Frame the time window" Foreground="{StaticResource BrushText}" Margin="0,2,0,8"/>
 
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="02" Foreground="{StaticResource BrushCopper}" FontFamily="Bahnschrift SemiCondensed" FontSize="18" FontWeight="Bold"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="Shape the signal with queue, direction, and media filters" Foreground="{StaticResource BrushText}" TextWrapping="Wrap" Margin="0,2,0,8"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="Filter by queue, direction, media type, or disconnect type" Foreground="{StaticResource BrushText}" TextWrapping="Wrap" Margin="0,2,0,8"/>
 
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="03" Foreground="{StaticResource BrushCopper}" FontFamily="Bahnschrift SemiCondensed" FontSize="18" FontWeight="Bold"/>
                                             <TextBlock Grid.Row="2" Grid.Column="1" Text="Launch preview or full extraction and watch run telemetry" Foreground="{StaticResource BrushText}" TextWrapping="Wrap" Margin="0,2,0,8"/>
@@ -598,8 +598,8 @@
 
                                 <Border Style="{StaticResource SectionCard}">
                                     <StackPanel>
-                                        <TextBlock Text="01  SCOPE WINDOW" Style="{StaticResource LblSection}"/>
-                                        <TextBlock Text="Define the interval that anchors every downstream action." Foreground="{StaticResource BrushSubtext}" FontSize="11" Margin="0,0,0,8"/>
+                                        <TextBlock Text="01  TIME RANGE" Style="{StaticResource LblSection}"/>
+                                        <TextBlock Text="Define the time range." Foreground="{StaticResource BrushSubtext}" FontSize="11" Margin="0,0,0,8"/>
 
                                         <TextBlock Text="Start date" Style="{StaticResource LblCaption}"/>
                                         <DatePicker x:Name="DtpStartDate" Height="30"/>
@@ -615,8 +615,8 @@
 
                                 <Border Style="{StaticResource SectionCard}">
                                     <StackPanel>
-                                        <TextBlock Text="02  SHAPE SIGNAL" Style="{StaticResource LblSection}"/>
-                                        <TextBlock Text="Constrain the extraction before you spend time on a full run." Foreground="{StaticResource BrushSubtext}" FontSize="11" Margin="0,0,0,8"/>
+                                        <TextBlock Text="02  FILTERS" Style="{StaticResource LblSection}"/>
+                                        <TextBlock Text="Filter by queue, direction, media, or disconnect type." Foreground="{StaticResource BrushSubtext}" FontSize="11" Margin="0,0,0,8"/>
 
                                         <TextBlock Text="Direction" Style="{StaticResource LblCaption}"/>
                                         <ComboBox x:Name="CmbDirection" Style="{StaticResource CmbBase}" Height="30">
@@ -648,13 +648,31 @@
                                         <TextBlock Text="Division ID" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
                                         <TextBox x:Name="TxtFilterDivisionId" Style="{StaticResource TxtBase}" Height="30"
                                                  ToolTip="Restrict query to this Genesys division GUID"/>
+
+                                        <CheckBox x:Name="ChkExternalTagExists"
+                                                  Content="External tag exists"
+                                                  Foreground="{StaticResource BrushText}"
+                                                  Margin="0,10,0,0"
+                                                  ToolTip="Conversation filter — only conversations that have an external tag set"/>
+
+                                        <TextBlock Text="Flow name (segment filter)" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
+                                        <TextBox x:Name="TxtFlowName" Style="{StaticResource TxtBase}" Height="30"
+                                                 ToolTip="Segment filter — only conversations that passed through this flow name"/>
+
+                                        <TextBlock Text="Message type (segment filter)" Style="{StaticResource LblCaption}" Margin="0,8,0,2"/>
+                                        <ComboBox x:Name="CmbMessageType" Style="{StaticResource CmbBase}" Height="30"
+                                                  ToolTip="Segment filter — restrict to a specific digital message channel">
+                                            <ComboBoxItem Content="(all)" IsSelected="True"/>
+                                            <ComboBoxItem Content="sms"/>
+                                            <ComboBoxItem Content="webmessaging"/>
+                                        </ComboBox>
                                     </StackPanel>
                                 </Border>
 
                                 <Border Style="{StaticResource SectionCard}">
                                     <StackPanel>
-                                        <TextBlock Text="03  EXTRACT" Style="{StaticResource LblSection}"/>
-                                        <TextBlock Text="Use preview to test the shape, then commit to the full pull." Foreground="{StaticResource BrushSubtext}" FontSize="11" Margin="0,0,0,8"/>
+                                        <TextBlock Text="03  FILTERS" Style="{StaticResource LblSection}"/>
+                                        <TextBlock Text="Run the analysis and review the results." Foreground="{StaticResource BrushSubtext}" FontSize="11" Margin="0,0,0,8"/>
 
                                         <TextBlock Text="Preview page size" Style="{StaticResource LblCaption}"/>
                                         <TextBox x:Name="TxtPreviewPageSize" Style="{StaticResource TxtBase}" Height="30" Text="25"/>
@@ -775,10 +793,10 @@
                                             Style="{StaticResource SectionCard}"
                                             Margin="0,0,0,10">
                                         <StackPanel>
-                                            <TextBlock Text="LIVE FILTERED VIEW"
+                                            <TextBlock Text="FILTERED RESULTS"
                                                        Style="{StaticResource LblSection}"
                                                        Margin="0,0,0,4"/>
-                                            <TextBlock Text="Search the indexed run, pivot quickly, and export exactly what you need."
+                                            <TextBlock Text="Export or preserve conversations that need follow-up."
                                                        Foreground="{StaticResource BrushSubtext}"
                                                        FontSize="11"
                                                        Margin="0,0,0,10"/>
