@@ -278,6 +278,83 @@
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
 
+        <!-- Sort + per-column filter header — used only on DgConversations -->
+        <Style x:Key="DgHeaderSortFilter" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#10171C"/>
+            <Setter Property="Foreground" Value="{StaticResource BrushSubtext}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BrushLine}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridColumnHeader">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="32"/>
+                                <RowDefinition Height="22"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Grid.RowSpan="2"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"/>
+                            <!-- Label row -->
+                            <Grid Grid.Row="0" Margin="6,0,6,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center"
+                                                  SnapsToDevicePixels="True"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}"
+                                                  TextElement.FontWeight="{TemplateBinding FontWeight}"
+                                                  TextElement.FontFamily="{TemplateBinding FontFamily}"/>
+                                <TextBlock x:Name="SortArrow" Grid.Column="1"
+                                           Text="" Visibility="Collapsed"
+                                           Foreground="{StaticResource BrushCopper}"
+                                           FontSize="10" Margin="4,0,0,0"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                            <!-- Filter row -->
+                            <TextBox x:Name="ColFilterBox" Grid.Row="1"
+                                     Margin="4,1,4,3" Height="18"
+                                     FontSize="10"
+                                     Background="#0A1015"
+                                     Foreground="{StaticResource BrushSubtext}"
+                                     BorderBrush="#283540"
+                                     BorderThickness="1"
+                                     Padding="3,0"
+                                     CaretBrush="{StaticResource BrushCyan}"
+                                     VerticalContentAlignment="Center"/>
+                            <!-- Resize grippers -->
+                            <Thumb x:Name="PART_LeftHeaderGripper"
+                                   Grid.Row="0" Grid.RowSpan="2"
+                                   HorizontalAlignment="Left" Width="4"
+                                   Cursor="SizeWE" Background="Transparent"
+                                   BorderThickness="0"/>
+                            <Thumb x:Name="PART_RightHeaderGripper"
+                                   Grid.Row="0" Grid.RowSpan="2"
+                                   HorizontalAlignment="Right" Width="4"
+                                   Cursor="SizeWE" Background="Transparent"
+                                   BorderThickness="0"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="SortDirection" Value="Ascending">
+                                    <Setter TargetName="SortArrow" Property="Text" Value="▲"/>
+                                    <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
+                                </Trigger>
+                                <Trigger Property="SortDirection" Value="Descending">
+                                    <Setter TargetName="SortArrow" Property="Text" Value="▼"/>
+                                    <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="DgCellStyle" TargetType="DataGridCell">
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="6,3"/>
@@ -865,19 +942,21 @@
                                             BorderThickness="1"
                                             CornerRadius="14"
                                             Padding="2">
-                                        <DataGrid x:Name="DgConversations" Style="{StaticResource DgBase}">
+                                        <DataGrid x:Name="DgConversations" Style="{StaticResource DgBase}"
+                                                  ColumnHeaderStyle="{StaticResource DgHeaderSortFilter}"
+                                                  ColumnHeaderHeight="54">
                                             <DataGrid.Columns>
-                                                <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" Width="240"/>
-                                                <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80"/>
-                                                <DataGridTextColumn Header="Media" Binding="{Binding MediaType}" Width="70"/>
-                                                <DataGridTextColumn Header="Queue" Binding="{Binding Queue}" Width="170"/>
-                                                <DataGridTextColumn Header="Agents" Binding="{Binding AgentNames}" Width="140"/>
-                                                <DataGridTextColumn Header="Duration (s)" Binding="{Binding DurationSec}" Width="80"/>
-                                                <DataGridTextColumn Header="Disconnect" Binding="{Binding Disconnect}" Width="90"/>
-                                                <DataGridCheckBoxColumn Header="Hold" Binding="{Binding HasHold}" Width="50"/>
-                                                <DataGridCheckBoxColumn Header="MOS" Binding="{Binding HasMos}" Width="50"/>
-                                                <DataGridTextColumn Header="Segments" Binding="{Binding SegmentCount}" Width="70"/>
-                                                <DataGridTextColumn Header="Participants" Binding="{Binding ParticipantCount}" Width="90"/>
+                                                <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" SortMemberPath="ConversationId" Width="240"/>
+                                                <DataGridTextColumn Header="Direction"       Binding="{Binding Direction}"      SortMemberPath="Direction"      Width="80"/>
+                                                <DataGridTextColumn Header="Media"           Binding="{Binding MediaType}"      SortMemberPath="MediaType"      Width="70"/>
+                                                <DataGridTextColumn Header="Queue"           Binding="{Binding Queue}"          SortMemberPath="Queue"          Width="170"/>
+                                                <DataGridTextColumn Header="Agents"          Binding="{Binding AgentNames}"     SortMemberPath="AgentNames"     Width="140"/>
+                                                <DataGridTextColumn Header="Duration (s)"    Binding="{Binding DurationSec}"    SortMemberPath="DurationSec"    Width="80"/>
+                                                <DataGridTextColumn Header="Disconnect"      Binding="{Binding Disconnect}"     SortMemberPath="Disconnect"     Width="90"/>
+                                                <DataGridCheckBoxColumn Header="Hold"        Binding="{Binding HasHold}"        SortMemberPath="HasHold"        Width="50"/>
+                                                <DataGridCheckBoxColumn Header="MOS"         Binding="{Binding HasMos}"         SortMemberPath="HasMos"         Width="50"/>
+                                                <DataGridTextColumn Header="Segments"        Binding="{Binding SegmentCount}"   SortMemberPath="SegmentCount"   Width="70"/>
+                                                <DataGridTextColumn Header="Participants"    Binding="{Binding ParticipantCount}" SortMemberPath="ParticipantCount" Width="90"/>
                                             </DataGrid.Columns>
                                         </DataGrid>
                                     </Border>

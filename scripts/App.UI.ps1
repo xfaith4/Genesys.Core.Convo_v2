@@ -107,6 +107,39 @@ $script:State = @{
     ActiveCaseId        = ''
     ActiveCaseName      = ''
     CurrentImpactReport = $null
+    SortColumn          = ''       # SortMemberPath of active sort column ('' = default)
+    SortAscending       = $true
+    ColumnFilters       = @{}      # SortMemberPath → filter text
+}
+
+# Maps display-row property names (SortMemberPath) → index entry property names
+$script:_IndexPropMap = @{
+    ConversationId   = 'id'
+    Direction        = 'direction'
+    MediaType        = 'mediaType'
+    Queue            = 'queue'
+    AgentNames       = 'agentNames'
+    DurationSec      = 'durationSec'
+    Disconnect       = 'disconnectType'
+    HasHold          = 'hasHold'
+    HasMos           = 'hasMos'
+    SegmentCount     = 'segmentCount'
+    ParticipantCount = 'participantCount'
+}
+
+# Maps display-row property names (SortMemberPath) → SQLite column names
+$script:_DbColMap = @{
+    ConversationId   = 'conversation_id'
+    Direction        = 'direction'
+    MediaType        = 'media_type'
+    Queue            = 'queue_name'
+    AgentNames       = 'agent_names'
+    DurationSec      = 'duration_sec'
+    Disconnect       = 'disconnect_type'
+    HasHold          = 'has_hold'
+    HasMos           = 'has_mos'
+    SegmentCount     = 'segment_count'
+    ParticipantCount = 'participant_count'
 }
 
 # Capture app directory at dot-source time for use inside background runspaces.
@@ -119,6 +152,60 @@ $script:UIAppDir = if ($PSScriptRoot) { $PSScriptRoot } else { $AppDir }
 function _Dispatch {
     param([scriptblock]$Action)
     $script:Window.Dispatcher.Invoke([System.Action]$Action)
+}
+
+# ── Visual-tree helper ────────────────────────────────────────────────────────
+
+function _FindVisualChildren {
+    param([System.Windows.DependencyObject]$Parent, [type]$ChildType)
+    $results = [System.Collections.Generic.List[object]]::new()
+    $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($Parent)
+    for ($i = 0; $i -lt $count; $i++) {
+        $child = [System.Windows.Media.VisualTreeHelper]::GetChild($Parent, $i)
+        if ($child -is $ChildType) { $results.Add($child) }
+        $results.AddRange((_FindVisualChildren -Parent $child -ChildType $ChildType))
+    }
+    return $results
+}
+
+# ── Column filter boxes ───────────────────────────────────────────────────────
+# Called once after DgConversations is rendered.  Finds each ColFilterBox TextBox
+# inside the column header template, tags it with the column's SortMemberPath,
+# then wires TextChanged to update ColumnFilters and re-render.
+
+function _WireColumnFilterBoxes {
+    $headersPresenter = (_FindVisualChildren `
+        -Parent    $script:DgConversations `
+        -ChildType ([System.Windows.Controls.Primitives.DataGridColumnHeadersPresenter])) |
+        Select-Object -First 1
+    if ($null -eq $headersPresenter) { return }
+
+    $headers = _FindVisualChildren `
+        -Parent    $headersPresenter `
+        -ChildType ([System.Windows.Controls.Primitives.DataGridColumnHeader])
+
+    foreach ($hdr in $headers) {
+        if ($null -eq $hdr.Column) { continue }          # filler / row-header column
+        $bindPath = $hdr.Column.SortMemberPath
+        if (-not $bindPath) { continue }
+
+        $filterBox = $hdr.Template.FindName('ColFilterBox', $hdr)
+        if ($null -eq $filterBox) { continue }
+
+        $filterBox.Tag = $bindPath
+        $filterBox.Add_TextChanged({
+            param($tbSender, $tbE)
+            $path = [string]$tbSender.Tag
+            $val  = $tbSender.Text.Trim()
+            if ($val) {
+                $script:State.ColumnFilters[$path] = $val
+            } else {
+                [void]$script:State.ColumnFilters.Remove($path)
+            }
+            $script:State.CurrentPage = 1
+            _ApplyFiltersAndRefresh
+        })
+    }
 }
 
 # ── Status helpers ─────────────────────────────────────────────────────────────
@@ -946,6 +1033,12 @@ function _RefreshGridFromDb {
             $script:State.CurrentPage = $script:State.TotalPages
         }
 
+        # Resolve sort column for DB query
+        $sortBy  = if ($script:State.SortColumn -and $script:_DbColMap.ContainsKey($script:State.SortColumn)) {
+            $script:_DbColMap[$script:State.SortColumn]
+        } else { 'conversation_start' }
+        $sortDir = if ($script:State.SortAscending) { 'ASC' } else { 'DESC' }
+
         $rows = @(Get-ConversationsPage `
             -CaseId         $caseId `
             -PageNumber     $script:State.CurrentPage `
@@ -957,9 +1050,24 @@ function _RefreshGridFromDb {
             -AgentName      $agent `
             -DivisionId     $divId `
             -StartDateTime  $startDt `
-            -EndDateTime    $endDt)
+            -EndDateTime    $endDt `
+            -SortBy         $sortBy `
+            -SortDir        $sortDir)
 
         $displayRows = @($rows | ForEach-Object { Get-DbConversationDisplayRow -DbRow $_ })
+
+        # Apply per-column text filters in memory (post-fetch)
+        if ($script:State.ColumnFilters.Count -gt 0) {
+            foreach ($bindPath in @($script:State.ColumnFilters.Keys)) {
+                $val = $script:State.ColumnFilters[$bindPath]
+                if (-not $val) { continue }
+                $lo = $val.ToLowerInvariant()
+                $displayRows = @($displayRows | Where-Object {
+                    $propVal = $_.PSObject.Properties[$bindPath]
+                    $null -ne $propVal -and [string]$propVal.Value -like "*$lo*"
+                })
+            }
+        }
         $page  = $script:State.CurrentPage
         $pages = $script:State.TotalPages
 
@@ -1051,6 +1159,33 @@ function _ApplyFiltersAndRefresh {
         if ($divId  -and -not (@($_.divisionIds) -contains $divId))  { $ok = $false }
         $ok
     }
+
+    # Apply per-column text filters (post-query LIKE on index properties)
+    if ($script:State.ColumnFilters.Count -gt 0) {
+        foreach ($bindPath in @($script:State.ColumnFilters.Keys)) {
+            $val = $script:State.ColumnFilters[$bindPath]
+            if (-not $val) { continue }
+            $idxProp = if ($script:_IndexPropMap.ContainsKey($bindPath)) { $script:_IndexPropMap[$bindPath] } else { $bindPath }
+            $lo = $val.ToLowerInvariant()
+            $filtered = $filtered | Where-Object {
+                $propVal = $_.PSObject.Properties[$idxProp]
+                $null -ne $propVal -and [string]$propVal.Value -like "*$lo*"
+            }
+        }
+    }
+
+    # Apply column sort
+    if ($script:State.SortColumn) {
+        $idxProp = if ($script:_IndexPropMap.ContainsKey($script:State.SortColumn)) {
+            $script:_IndexPropMap[$script:State.SortColumn]
+        } else { $script:State.SortColumn }
+        $filtered = if ($script:State.SortAscending) {
+            @($filtered | Sort-Object { $_.$idxProp })
+        } else {
+            @($filtered | Sort-Object { $_.$idxProp } -Descending)
+        }
+    }
+
     $script:State.CurrentIndex = @($filtered)
     $script:State.TotalPages   = [math]::Max(1, [math]::Ceiling($filtered.Count / $script:State.PageSize))
     $script:State.CurrentImpactReport = $null
@@ -2157,6 +2292,39 @@ $script:BtnNextPage.Add_Click({
         $script:State.CurrentPage++
         _RenderCurrentPage
     }
+})
+
+# Wire filter boxes once the DataGrid visual tree has been built
+$script:DgConversations.Add_Loaded({ _WireColumnFilterBoxes })
+
+# Intercept column-header click to implement server/index-aware sort
+$script:DgConversations.Add_Sorting({
+    param($dgSender, $dgE)
+    $dgE.Handled = $true   # prevent WPF's default (page-only) sort
+
+    $bindPath = $dgE.Column.SortMemberPath
+    if (-not $bindPath) { return }
+
+    if ($script:State.SortColumn -eq $bindPath) {
+        $script:State.SortAscending = -not $script:State.SortAscending
+    } else {
+        $script:State.SortColumn    = $bindPath
+        $script:State.SortAscending = $true
+    }
+
+    # Update the visual sort-direction indicators
+    foreach ($col in $script:DgConversations.Columns) {
+        $col.SortDirection = if ($col.SortMemberPath -eq $bindPath) {
+            if ($script:State.SortAscending) {
+                [System.ComponentModel.ListSortDirection]::Ascending
+            } else {
+                [System.ComponentModel.ListSortDirection]::Descending
+            }
+        } else { $null }
+    }
+
+    $script:State.CurrentPage = 1
+    _ApplyFiltersAndRefresh
 })
 
 $script:DgConversations.Add_SelectionChanged({
