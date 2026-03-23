@@ -34,6 +34,7 @@ Import-Module (Join-Path $AppDir 'modules\App.Index.psm1')        -Force -ErrorA
 Import-Module (Join-Path $AppDir 'modules\App.Export.psm1')       -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'modules\App.Reporting.psm1')    -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'modules\App.Database.psm1')     -Force -ErrorAction Stop
+Import-Module (Join-Path $AppDir 'modules\App.ConvStore.psm1')    -Force -ErrorAction Stop
 
 # ── Bootstrap: auto-clone Genesys.Core if it has never been set up ───────────
 #
@@ -235,7 +236,22 @@ try {
     Write-Warning "Gate A – CoreAdapter init failed: $script:CoreInitError"
 }
 
-# ── 4b. Gate F: Initialize Database (non-fatal – missing DLL shown in status bar) ──
+# ── 4b. Gate G: Initialize ConvStore (non-fatal – shown in status bar) ───────
+$script:ConvStoreWarning = ''
+try {
+    Initialize-ConvStore `
+        -ConnStr       $cfg.ConvStoreConnStr `
+        -NpgsqlDllPath $cfg.ConvStoreNpgsqlDllPath `
+        -AppDir        $AppDir
+    if (Test-ConvStoreReady) {
+        Invoke-ConvStoreRetentionPurge -RetentionDays $cfg.ConvStoreRetentionDays | Out-Null
+    }
+} catch {
+    $script:ConvStoreWarning = "Conversation store unavailable: $_"
+    Write-Warning $script:ConvStoreWarning
+}
+
+# ── 4c. Gate F: Initialize Database (non-fatal – missing DLL shown in status bar) ──
 $script:DatabaseWarning = ''
 try {
     Initialize-Database `
