@@ -331,12 +331,12 @@
                             <!-- Resize grippers -->
                             <Thumb x:Name="PART_LeftHeaderGripper"
                                    Grid.Row="0" Grid.RowSpan="2"
-                                   HorizontalAlignment="Left" Width="4"
+                                   HorizontalAlignment="Left" Width="2"
                                    Cursor="SizeWE" Background="Transparent"
                                    BorderThickness="0"/>
                             <Thumb x:Name="PART_RightHeaderGripper"
                                    Grid.Row="0" Grid.RowSpan="2"
-                                   HorizontalAlignment="Right" Width="4"
+                                   HorizontalAlignment="Right" Width="2"
                                    Cursor="SizeWE" Background="Transparent"
                                    BorderThickness="0"/>
                         </Grid>
