@@ -85,8 +85,12 @@ $index      = ReadFile 'modules\App.Index.psm1'
 $export     = ReadFile 'modules\App.Export.psm1'
 $reporting  = ReadFile 'modules\App.Reporting.psm1'
 $database   = ReadFile 'modules\App.Database.psm1'
-$auth       = ReadFile 'modules\App.Auth.psm1'
 $config     = ReadFile 'modules\App.Config.psm1'
+# Genesys.Auth lives in the sibling Core repo (Gate E)
+$genesysAuthPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($AppRoot, '..', 'Genesys.Core', 'modules', 'Genesys.Auth', 'Genesys.Auth.psm1'))
+$genesysAuth = if ([System.IO.File]::Exists($genesysAuthPath)) {
+    [System.IO.File]::ReadAllText($genesysAuthPath, [System.Text.Encoding]::UTF8)
+} else { '' }
 $xaml       = ReadFile 'resources\MainWindow.xaml'
 
 # ── Architecture: startup path ────────────────────────────────────────────────
@@ -200,18 +204,18 @@ ArchCheck 'ARCH-22B' 'App.UI.ps1 can generate impact reports from filtered index
 }
 
 # ── Architecture: auth containment ────────────────────────────────────────────
-Write-Host "`n--- Auth containment ---" -ForegroundColor DarkCyan
+Write-Host "`n--- Auth containment (Genesys.Auth – sibling Core repo) ---" -ForegroundColor DarkCyan
 
-ArchCheck 'ARCH-22' 'App.Auth.psm1 uses DPAPI Protect' {
-    $auth -match 'ProtectedData.*Protect'
+ArchCheck 'ARCH-22' 'Genesys.Auth uses DPAPI Protect' {
+    $genesysAuth -match 'ProtectedData.*Protect'
 }
 
-ArchCheck 'ARCH-23' 'App.Auth.psm1 targets login.{region} only (no /api/v2/)' {
-    $auth -match 'login\.' -and ($auth -notmatch '/api/v2/')
+ArchCheck 'ARCH-23' 'Genesys.Auth targets login.{region} only (no /api/v2/)' {
+    $genesysAuth -match 'login\.' -and ($genesysAuth -notmatch '/api/v2/')
 }
 
 ArchCheck 'ARCH-24' 'Auth token stored in LOCALAPPDATA path' {
-    $auth -match 'LOCALAPPDATA'
+    $genesysAuth -match 'LOCALAPPDATA'
 }
 
 # ── Architecture: run artifact contract ───────────────────────────────────────

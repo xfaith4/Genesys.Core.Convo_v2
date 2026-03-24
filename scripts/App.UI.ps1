@@ -1929,14 +1929,14 @@ function _ShowConnectDialog {
 
         $rs2  = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace(); $rs2.Open()
         $ps2  = [System.Management.Automation.PowerShell]::Create(); $ps2.Runspace = $rs2
-        $appDir = $script:UIAppDir
+        $authModPath = [System.IO.Path]::Combine((Get-CoreSiblingRoot), 'modules', 'Genesys.Auth', 'Genesys.Auth.psm1')
         [void]$ps2.AddScript({
-            param($AppDir, $ClientId, $Region, $RedirectUri, $CancelToken)
-            Import-Module (Join-Path $AppDir 'modules\App.Auth.psm1') -Force
+            param($AuthModPath, $ClientId, $Region, $RedirectUri, $CancelToken)
+            Import-Module $AuthModPath -Force
             Connect-GenesysCloudPkce -ClientId $ClientId -Region $Region `
                 -RedirectUri $RedirectUri -CancellationToken $CancelToken
         })
-        [void]$ps2.AddArgument($appDir)
+        [void]$ps2.AddArgument($authModPath)
         [void]$ps2.AddArgument($clientId)
         [void]$ps2.AddArgument($region)
         [void]$ps2.AddArgument($redirectUri)
@@ -1947,7 +1947,7 @@ function _ShowConnectDialog {
         # Poll for PKCE completion
         $pkceTimer = New-Object System.Windows.Threading.DispatcherTimer
         $pkceTimer.Interval = [System.TimeSpan]::FromSeconds(1)
-        $pkceTimer.Add_Tick({
+        $pkceTimer.Add_Tick(({
             if (-not $ar2.IsCompleted) { return }
             $pkceTimer.Stop()
             try {
@@ -1964,7 +1964,7 @@ function _ShowConnectDialog {
                 try { $cts.Dispose() } catch { }
                 $script:State.PkceCancel = $null
             }
-        })
+        }).GetNewClosure())
         $pkceTimer.Start()
     })
 

@@ -2,16 +2,16 @@
 
 <#
 .SYNOPSIS
-    Gate D – Static compliance checks for Genesys Conversation Analysis.
+    Gate D / Gate E – Static compliance checks for Genesys Conversation Analysis.
 .DESCRIPTION
     Performs pass/fail checks on source files without executing them:
       - Required file structure
-      - No direct REST calls outside App.Auth.psm1
+      - No direct REST calls in app files (auth delegated to Genesys.Auth in sibling repo)
       - No /api/v2/ literals
       - Genesys.Core import isolation (only in App.CoreAdapter.psm1)
       - Invoke-Dataset and Assert-Catalog only in App.CoreAdapter.psm1
       - No vendored Genesys.Core module
-      - DPAPI usage in App.Auth.psm1
+      - DPAPI usage in Genesys.Auth (sibling Core repo)
       - Auth targets only login.{region} endpoints
       - Indexing implementation signals
       - Export streaming signals
@@ -70,7 +70,7 @@ function ReadFile {
 
 function AllAppFiles {
     # Returns content of all app files EXCEPT tests/
-    $files = @('App.ps1','scripts\App.UI.ps1','modules\App.CoreAdapter.psm1','modules\App.Auth.psm1',
+    $files = @('App.ps1','scripts\App.UI.ps1','modules\App.CoreAdapter.psm1',
                'modules\App.Config.psm1','modules\App.Index.psm1','modules\App.Export.psm1','modules\App.Reporting.psm1','modules\App.Database.psm1')
     $content = foreach ($f in $files) { ReadFile $f }
     return $content -join "`n"
@@ -78,13 +78,20 @@ function AllAppFiles {
 
 function FilesExcluding {
     param([string[]]$Exclude)
-    $allFiles = @('App.ps1','scripts\App.UI.ps1','modules\App.CoreAdapter.psm1','modules\App.Auth.psm1',
+    $allFiles = @('App.ps1','scripts\App.UI.ps1','modules\App.CoreAdapter.psm1',
                   'modules\App.Config.psm1','modules\App.Index.psm1','modules\App.Export.psm1','modules\App.Reporting.psm1','modules\App.Database.psm1',
                   'resources\MainWindow.xaml',
                   'tests\Test-Compliance.ps1','tests\Invoke-AllTests.ps1')
     $filtered = $allFiles | Where-Object { $_ -notin $Exclude }
     return ($filtered | ForEach-Object { ReadFile $_ }) -join "`n"
 }
+
+# Genesys.Auth content from the sibling Core repo (Gate E)
+$script:GenesysAuthPath = [System.IO.Path]::GetFullPath(
+    [System.IO.Path]::Combine($AppRoot, '..', 'Genesys.Core', 'modules', 'Genesys.Auth', 'Genesys.Auth.psm1'))
+$script:GenesysAuthContent = if ([System.IO.File]::Exists($script:GenesysAuthPath)) {
+    [System.IO.File]::ReadAllText($script:GenesysAuthPath, [System.Text.Encoding]::UTF8)
+} else { '' }
 
 # ── STRUCTURE CHECKS (STR) ────────────────────────────────────────────────────
 
@@ -93,7 +100,9 @@ Write-Host "`n=== STRUCTURE ===" -ForegroundColor Cyan
 Check 'STR-01' 'App.ps1 exists'                    { FileExists 'App.ps1' }
 Check 'STR-02' 'scripts\App.UI.ps1 exists'                 { FileExists 'scripts\App.UI.ps1' }
 Check 'STR-03' 'modules\App.CoreAdapter.psm1 exists'       { FileExists 'modules\App.CoreAdapter.psm1' }
-Check 'STR-04' 'modules\App.Auth.psm1 exists'              { FileExists 'modules\App.Auth.psm1' }
+Check 'STR-04' 'Genesys.Auth module present in sibling Core repo' {
+    [System.IO.File]::Exists($script:GenesysAuthPath)
+}
 Check 'STR-05' 'modules\App.Config.psm1 exists'            { FileExists 'modules\App.Config.psm1' }
 Check 'STR-06' 'modules\App.Index.psm1 exists'             { FileExists 'modules\App.Index.psm1' }
 Check 'STR-07' 'modules\App.Export.psm1 exists'            { FileExists 'modules\App.Export.psm1' }
@@ -109,23 +118,23 @@ Check 'STR-13' 'docs\Case_Lifecycle_and_Retention.md exists' { FileExists 'docs\
 
 Write-Host "`n=== REST ISOLATION (Gate D) ===" -ForegroundColor Cyan
 
-$nonAuthContent = FilesExcluding -Exclude @('modules\App.Auth.psm1', 'tests\Test-Compliance.ps1', 'tests\Invoke-AllTests.ps1')
+$nonTestContent = FilesExcluding -Exclude @('tests\Test-Compliance.ps1', 'tests\Invoke-AllTests.ps1')
 
-Check 'REST-01' 'Invoke-RestMethod absent outside App.Auth.psm1' {
-    -not ($nonAuthContent -match 'Invoke-RestMethod')
+Check 'REST-01' 'Invoke-RestMethod absent from all app files (auth delegated to Genesys.Core)' {
+    -not ($nonTestContent -match 'Invoke-RestMethod')
 }
 
-Check 'REST-02' 'Invoke-WebRequest absent outside App.Auth.psm1' {
-    -not ($nonAuthContent -match 'Invoke-WebRequest')
+Check 'REST-02' 'Invoke-WebRequest absent from all app files' {
+    -not ($nonTestContent -match 'Invoke-WebRequest')
 }
 
 Check 'REST-03' 'No /api/v2/ literal in any app file' {
     -not ((AllAppFiles) -match '/api/v2/')
 }
 
-# Auth file itself must NOT contain /api/v2/
-Check 'REST-04' 'No /api/v2/ literal in App.Auth.psm1' {
-    -not ((ReadFile 'modules\App.Auth.psm1') -match '/api/v2/')
+# Genesys.Auth (sibling) must NOT reach /api/v2/
+Check 'REST-04' 'No /api/v2/ literal in Genesys.Auth (sibling Core repo)' {
+    -not ($script:GenesysAuthContent -match '/api/v2/')
 }
 
 # ── CORE IMPORT ISOLATION (CORE) ─────────────────────────────────────────────
@@ -173,34 +182,32 @@ Check 'VENDOR-02' 'No Genesys.Core.psd1 file vendored in repo' {
     $psd.Count -eq 0
 }
 
-# ── AUTH CONTAINMENT (Gate E) ─────────────────────────────────────────────────
+# ── AUTH CONTAINMENT (Gate E – Genesys.Auth in sibling Core repo) ─────────────
 
-Write-Host "`n=== AUTH CONTAINMENT (Gate E) ===" -ForegroundColor Cyan
+Write-Host "`n=== AUTH CONTAINMENT (Gate E – Genesys.Auth) ===" -ForegroundColor Cyan
 
-$authContent = ReadFile 'modules\App.Auth.psm1'
-
-Check 'AUTH-01' 'App.Auth.psm1 uses ProtectedData::Protect (DPAPI)' {
-    $authContent -match 'ProtectedData.*Protect'
+Check 'AUTH-01' 'Genesys.Auth uses ProtectedData::Protect (DPAPI)' {
+    $script:GenesysAuthContent -match 'ProtectedData.*Protect'
 }
 
-Check 'AUTH-02' 'App.Auth.psm1 uses ProtectedData::Unprotect (DPAPI)' {
-    $authContent -match 'ProtectedData.*Unprotect'
+Check 'AUTH-02' 'Genesys.Auth uses ProtectedData::Unprotect (DPAPI)' {
+    $script:GenesysAuthContent -match 'ProtectedData.*Unprotect'
 }
 
-Check 'AUTH-03' 'App.Auth.psm1 targets login.{region} OAuth endpoints' {
-    $authContent -match 'login\.\$\(.*\)/oauth'
+Check 'AUTH-03' 'Genesys.Auth targets login.{region} OAuth endpoints' {
+    $script:GenesysAuthContent -match 'login\.\$\(.*\)/oauth'
 }
 
-Check 'AUTH-04' 'App.Auth.psm1 stores auth in LOCALAPPDATA' {
-    $authContent -match 'LOCALAPPDATA'
+Check 'AUTH-04' 'Genesys.Auth stores auth in LOCALAPPDATA' {
+    $script:GenesysAuthContent -match 'LOCALAPPDATA'
 }
 
-Check 'AUTH-05' 'App.Auth.psm1 exports required functions' {
+Check 'AUTH-05' 'Genesys.Auth exports required functions' {
     $required = @('Connect-GenesysCloudApp','Connect-GenesysCloudPkce','Get-StoredHeaders',
                   'Test-GenesysConnection','Get-ConnectionInfo','Clear-StoredToken')
     $allPresent = $true
     foreach ($fn in $required) {
-        if ($authContent -notmatch $fn) { $allPresent = $false; break }
+        if ($script:GenesysAuthContent -notmatch $fn) { $allPresent = $false; break }
     }
     $allPresent
 }
@@ -416,7 +423,7 @@ foreach ($ctrl in $requiredControls) {
 
 Write-Host "`n=== STRICT MODE ===" -ForegroundColor Cyan
 
-$modulesToCheck = @('modules\App.CoreAdapter.psm1','modules\App.Auth.psm1','modules\App.Config.psm1',
+$modulesToCheck = @('modules\App.CoreAdapter.psm1','modules\App.Config.psm1',
                     'modules\App.Index.psm1','modules\App.Export.psm1','modules\App.Database.psm1')
 foreach ($m in $modulesToCheck) {
     Check "STRICT-$m" "$m uses Set-StrictMode -Version Latest" {

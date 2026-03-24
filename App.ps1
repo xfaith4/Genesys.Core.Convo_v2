@@ -26,9 +26,9 @@ Add-Type -AssemblyName System.Xaml
 Add-Type -AssemblyName Microsoft.Win32.Primitives  -ErrorAction SilentlyContinue
 
 # ── 2. Import app modules ─────────────────────────────────────────────────────
-# Order matters: Config → Auth → CoreAdapter → Index → Export → Reporting → Database
+# Order matters: Config → CoreAdapter → Index → Export → Reporting → Database
+# Authentication is handled by Genesys.Auth in the sibling Genesys.Core repo (Gate E below).
 Import-Module (Join-Path $AppDir 'modules\App.Config.psm1')      -Force -ErrorAction Stop
-Import-Module (Join-Path $AppDir 'modules\App.Auth.psm1')         -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'modules\App.CoreAdapter.psm1')  -Force -ErrorAction Stop
 Import-Module (Join-Path $AppDir 'modules\App.Index.psm1')        -Force -ErrorAction Stop -DisableNameChecking
 Import-Module (Join-Path $AppDir 'modules\App.Export.psm1')       -Force -ErrorAction Stop
@@ -223,7 +223,17 @@ if (-not [System.IO.File]::Exists($corePath)) {
     }
 }
 
-# ── 4. Gate A: Initialize CoreAdapter (non-fatal – user can fix via Settings) ─
+# ── 4. Gate E: Import Genesys.Auth from sibling Core repo (non-fatal) ────────
+$script:AuthModuleWarning = ''
+$authModPath = [System.IO.Path]::Combine((Get-CoreSiblingRoot), 'modules', 'Genesys.Auth', 'Genesys.Auth.psm1')
+try {
+    Import-Module $authModPath -Force -ErrorAction Stop
+} catch {
+    $script:AuthModuleWarning = "Auth module unavailable: $_"
+    Write-Warning $script:AuthModuleWarning
+}
+
+# ── 4b. Gate A: Initialize CoreAdapter (non-fatal – user can fix via Settings) ─
 $script:CoreInitError = ''
 try {
     Initialize-CoreAdapter `
@@ -236,7 +246,7 @@ try {
     Write-Warning "Gate A – CoreAdapter init failed: $script:CoreInitError"
 }
 
-# ── 4b. Gate G: Initialize ConvStore (non-fatal – shown in status bar) ───────
+# ── 4c. Gate G: Initialize ConvStore (non-fatal – shown in status bar) ───────
 $script:ConvStoreWarning = ''
 try {
     Initialize-ConvStore `
@@ -251,7 +261,7 @@ try {
     Write-Warning $script:ConvStoreWarning
 }
 
-# ── 4c. Gate F: Initialize Database (non-fatal – missing DLL shown in status bar) ──
+# ── 4d. Gate F: Initialize Database (non-fatal – missing DLL shown in status bar) ──
 $script:DatabaseWarning = ''
 try {
     Initialize-Database `
